@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">弦准</string>
+    <string name="launch_url" translatable="false">https://lj5201lj.github.io/guitar-tuner-pwa/</string>
+    <string name="asset_statements" translatable="false">[{&quot;relation&quot;:[&quot;delegate_permission/common.handle_all_urls&quot;],&quot;target&quot;:{&quot;namespace&quot;:&quot;web&quot;,&quot;site&quot;:&quot;https://lj5201lj.github.io&quot;}}]</string>
+</resources>
