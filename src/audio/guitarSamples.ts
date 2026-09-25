@@ -1,5 +1,7 @@
 import { noteToFrequency, type NoteName } from './tunings.ts'
 
+const ASSET_BASE = import.meta.env?.BASE_URL ?? '/'
+
 export type GuitarSample = {
   id: string
   note: NoteName
@@ -15,7 +17,7 @@ function sample(note: NoteName, octave: number): GuitarSample {
     note,
     octave,
     frequency: noteToFrequency(note, octave),
-    url: `/audio/guitar-acoustic/${fileNote}${octave}.mp3`,
+    url: `${ASSET_BASE}audio/guitar-acoustic/${fileNote}${octave}.mp3`,
   }
 }
 
