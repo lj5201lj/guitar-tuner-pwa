@@ -28,6 +28,10 @@ const EMPTY_READING: TunerReading = {
   hasSignal: false,
 }
 
+const ANALYSIS_RESET_MS = 500
+const READING_HOLD_MS = 2_000
+const QUIET_RENDER_INTERVAL_MS = 120
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 const median = (values: number[]) => {
@@ -133,6 +137,29 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
       let lastValidAt = 0
       let lastQuietRenderAt = 0
 
+      const handleMissingPitch = (now: number, level: number) => {
+        const timeSinceValidPitch = now - lastValidAt
+
+        if (
+          timeSinceValidPitch > ANALYSIS_RESET_MS &&
+          (pitchHistory.length > 0 || smoothedPitch !== null)
+        ) {
+          pitchHistory.length = 0
+          smoothedPitch = null
+          pendingJumpFrames = 0
+        }
+
+        if (now - lastQuietRenderAt <= QUIET_RENDER_INTERVAL_MS) return
+        lastQuietRenderAt = now
+
+        if (timeSinceValidPitch > READING_HOLD_MS) {
+          setReading({ ...EMPTY_READING, level })
+          return
+        }
+
+        setReading((current) => current.hasSignal ? { ...current, level } : { ...EMPTY_READING, level })
+      }
+
       const analyse = (now: number) => {
         frameRef.current = requestAnimationFrame(analyse)
         if (now - lastAnalysisAt < 65) return
@@ -145,22 +172,14 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
 
         if (rms < gate) {
           noiseFloor = clamp(noiseFloor * 0.96 + rms * 0.04, 0.002, 0.012)
-          if (now - lastValidAt > 420 && now - lastQuietRenderAt > 120) {
-            pitchHistory.length = 0
-            smoothedPitch = null
-            lastQuietRenderAt = now
-            setReading({ ...EMPTY_READING, level })
-          }
+          handleMissingPitch(now, level)
           return
         }
 
         const estimate = estimatePitchYin(samples, context.sampleRate)
         if (!estimate || estimate.clarity < 0.74) {
           noiseFloor = clamp(noiseFloor * 0.98 + Math.min(rms, 0.012) * 0.02, 0.002, 0.012)
-          if (now - lastValidAt > 420 && now - lastQuietRenderAt > 120) {
-            lastQuietRenderAt = now
-            setReading({ ...EMPTY_READING, level })
-          }
+          handleMissingPitch(now, level)
           return
         }
 
