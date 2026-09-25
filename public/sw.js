@@ -1,4 +1,4 @@
-const CACHE = 'xianzhun-v2'
+const CACHE = 'xianzhun-v3'
 const CORE = ['/', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png']
 
 self.addEventListener('install', (event) => {

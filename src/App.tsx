@@ -87,8 +87,8 @@ function StringButton({ guitarString, active, sounding, onSelect }: {
       type="button"
       aria-pressed={active}
       aria-label={sounding
-        ? `停止 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave} 参考音`
-        : `选择并播放 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave} 参考音`}
+        ? `重新拨响 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave} 吉他参考音`
+        : `选择并拨响 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave} 吉他参考音`}
       onClick={onSelect}
     >
       <span className="string-number">{guitarString.stringNumber}</span>
@@ -282,7 +282,7 @@ export default function App() {
   const cents = reading.cents ?? 0
   const accurate = !referenceTone.isPlaying && reading.hasSignal && Math.abs(cents) <= 5
   const status = referenceTone.activeString
-    ? `参考音 ${referenceTone.activeString.note}${referenceTone.activeString.octave} 播放中`
+    ? `吉他参考音 ${referenceTone.activeString.note}${referenceTone.activeString.octave} 渐弱中`
     : !reading.hasSignal
     ? engineState === 'listening' ? '弹响一根琴弦' : '等待开始'
     : accurate ? '准确' : cents < 0 ? '偏低' : '偏高'
@@ -404,7 +404,7 @@ export default function App() {
         </div>
         <div className="strings-heading">
           <span>{activeTuning.name}</span>
-          <span>{referenceTone.isPlaying ? '再点当前弦停止' : mode === 'auto' ? '自动识别' : '点弦播放参考音'}</span>
+          <span>{referenceTone.isPlaying ? '再次点击重新拨弦' : mode === 'auto' ? '自动识别' : '点弦播放吉他音'}</span>
         </div>
         <div className="string-grid">
           {activeTuning.strings.map((guitarString) => (
