@@ -283,6 +283,8 @@ h1 { margin: 0; font-size: 1.18rem; line-height: 1; letter-spacing: 0.12em; }
 .string-note { font-family: Georgia, "Times New Roman", serif; font-size: 1.62rem; line-height: 1; }
 .string-octave { margin-left: 0.1rem; color: #6f746a; font-size: 0.68rem; }
 .string-button.active .string-number, .string-button.active .string-octave { color: #a88c51; }
+.sample-credit { margin: 0.5rem 0 0; color: #5f645b; font-size: 0.66rem; line-height: 1.35; text-align: center; }
+.sample-credit a { color: #777d70; text-underline-offset: 0.16rem; }
 .string-sound {
   position: absolute;
   top: 0.22rem;

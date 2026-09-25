@@ -282,7 +282,7 @@ export default function App() {
   const cents = reading.cents ?? 0
   const accurate = !referenceTone.isPlaying && reading.hasSignal && Math.abs(cents) <= 5
   const status = referenceTone.activeString
-    ? `吉他参考音 ${referenceTone.activeString.note}${referenceTone.activeString.octave} 渐弱中`
+    ? `真实吉他音 ${referenceTone.activeString.note}${referenceTone.activeString.octave} 播放中`
     : !reading.hasSignal
     ? engineState === 'listening' ? '弹响一根琴弦' : '等待开始'
     : accurate ? '准确' : cents < 0 ? '偏低' : '偏高'
@@ -421,6 +421,9 @@ export default function App() {
             />
           ))}
         </div>
+        <p className="sample-credit">
+          吉他采样：<a href="https://github.com/nbrosowsky/tonejs-instruments" target="_blank" rel="noreferrer">tonejs-instruments</a> · CC BY 3.0
+        </p>
       </section>
 
       {editorInitialTuning && (

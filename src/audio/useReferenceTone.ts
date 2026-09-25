@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { synthesizePluckedString } from './pluckedString'
+import {
+  GUITAR_SAMPLES,
+  playbackRateForSample,
+  selectNearestGuitarSample,
+  type GuitarSample,
+} from './guitarSamples'
 import type { GuitarString } from './tunings'
 
 const STOP_FADE_SECONDS = 0.025
-const OUTPUT_GAIN = 0.58
+const OUTPUT_GAIN = 0.88
+const sampleRequests = new Map<string, Promise<ArrayBuffer>>()
 
 type GuitarVoice = {
   source: AudioBufferSourceNode
   gain: GainNode
-  nodes: AudioNode[]
+  disposed: boolean
 }
 
 function getAudioContextClass() {
@@ -16,9 +22,28 @@ function getAudioContextClass() {
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
 }
 
+function requestSample(url: string): Promise<ArrayBuffer> {
+  const existing = sampleRequests.get(url)
+  if (existing) return existing
+
+  const request = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Unable to load sample: ${response.status}`)
+      return response.arrayBuffer()
+    })
+    .catch((error) => {
+      sampleRequests.delete(url)
+      throw error
+    })
+  sampleRequests.set(url, request)
+  return request
+}
+
 function disconnectVoice(voice: GuitarVoice) {
+  if (voice.disposed) return
+  voice.disposed = true
   voice.source.disconnect()
-  voice.nodes.forEach((node) => node.disconnect())
+  voice.gain.disconnect()
 }
 
 export function useReferenceTone() {
@@ -26,6 +51,9 @@ export function useReferenceTone() {
   const [errorMessage, setErrorMessage] = useState('')
   const contextRef = useRef<AudioContext | null>(null)
   const voiceRef = useRef<GuitarVoice | null>(null)
+  const decodedSamplesRef = useRef(new Map<string, AudioBuffer>())
+  const requestIdRef = useRef(0)
+  const mountedRef = useRef(true)
 
   const releaseVoice = useCallback((voice: GuitarVoice, context: AudioContext) => {
     const now = context.currentTime
@@ -36,6 +64,7 @@ export function useReferenceTone() {
   }, [])
 
   const stop = useCallback(() => {
+    requestIdRef.current += 1
     const context = contextRef.current
     const voice = voiceRef.current
     voiceRef.current = null
@@ -43,8 +72,24 @@ export function useReferenceTone() {
     if (context && voice) releaseVoice(voice, context)
   }, [releaseVoice])
 
+  const decodeSample = useCallback(async (
+    context: AudioContext,
+    guitarSample: GuitarSample,
+  ): Promise<AudioBuffer> => {
+    const cached = decodedSamplesRef.current.get(guitarSample.id)
+    if (cached) return cached
+    const encoded = await requestSample(guitarSample.url)
+    const decoded = await context.decodeAudioData(encoded.slice(0))
+    decodedSamplesRef.current.set(guitarSample.id, decoded)
+    return decoded
+  }, [])
+
   const play = useCallback(async (guitarString: GuitarString) => {
+    const requestId = requestIdRef.current + 1
+    requestIdRef.current = requestId
     setErrorMessage('')
+    setActiveString(guitarString)
+
     try {
       const AudioContextClass = getAudioContextClass()
       if (!AudioContextClass) throw new Error('AudioContext is unavailable')
@@ -57,48 +102,22 @@ export function useReferenceTone() {
       if (context.state === 'suspended') await context.resume()
 
       const previousVoice = voiceRef.current
+      voiceRef.current = null
       if (previousVoice) releaseVoice(previousVoice, context)
 
-      const samples = synthesizePluckedString(guitarString.frequency, context.sampleRate)
-      const buffer = context.createBuffer(1, samples.length, context.sampleRate)
-      buffer.getChannelData(0).set(samples)
+      const guitarSample = selectNearestGuitarSample(guitarString.frequency)
+      const buffer = await decodeSample(context, guitarSample)
+      if (!mountedRef.current || requestIdRef.current !== requestId) return
 
       const source = context.createBufferSource()
-      const highPass = context.createBiquadFilter()
-      const bodyLow = context.createBiquadFilter()
-      const bodyMid = context.createBiquadFilter()
-      const lowPass = context.createBiquadFilter()
       const gain = context.createGain()
-
       source.buffer = buffer
-      highPass.type = 'highpass'
-      highPass.frequency.value = 48
-      highPass.Q.value = 0.7
-      bodyLow.type = 'peaking'
-      bodyLow.frequency.value = 110
-      bodyLow.Q.value = 1.05
-      bodyLow.gain.value = 3.6
-      bodyMid.type = 'peaking'
-      bodyMid.frequency.value = 220
-      bodyMid.Q.value = 1.4
-      bodyMid.gain.value = 2.1
-      lowPass.type = 'lowpass'
-      lowPass.frequency.value = Math.min(5_800, 3_000 + guitarString.frequency * 4)
-      lowPass.Q.value = 0.72
+      source.playbackRate.value = playbackRateForSample(guitarString.frequency, guitarSample)
       gain.gain.value = OUTPUT_GAIN
-
-      source.connect(highPass)
-      highPass.connect(bodyLow)
-      bodyLow.connect(bodyMid)
-      bodyMid.connect(lowPass)
-      lowPass.connect(gain)
+      source.connect(gain)
       gain.connect(context.destination)
 
-      const voice: GuitarVoice = {
-        source,
-        gain,
-        nodes: [highPass, bodyLow, bodyMid, lowPass, gain],
-      }
+      const voice: GuitarVoice = { source, gain, disposed: false }
       voiceRef.current = voice
       source.onended = () => {
         disconnectVoice(voice)
@@ -107,18 +126,23 @@ export function useReferenceTone() {
           setActiveString(null)
         }
       }
-
-      setActiveString(guitarString)
       source.start()
     } catch {
+      if (requestIdRef.current !== requestId) return
       stop()
-      setErrorMessage('无法播放吉他参考音，请再次轻触琴弦。')
+      setErrorMessage('真实吉他音频载入失败，请刷新页面后重试。')
     }
-  }, [releaseVoice, stop])
+  }, [decodeSample, releaseVoice, stop])
 
   const toggle = useCallback((guitarString: GuitarString) => {
     void play(guitarString)
   }, [play])
+
+  useEffect(() => {
+    GUITAR_SAMPLES.forEach((guitarSample) => {
+      void requestSample(guitarSample.url).catch(() => undefined)
+    })
+  }, [])
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -128,17 +152,22 @@ export function useReferenceTone() {
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [stop])
 
-  useEffect(() => () => {
-    const voice = voiceRef.current
-    if (voice) {
-      try { voice.source.stop() } catch { /* Already ended. */ }
-      disconnectVoice(voice)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      requestIdRef.current += 1
+      const voice = voiceRef.current
+      if (voice) {
+        try { voice.source.stop() } catch { /* Already ended. */ }
+        disconnectVoice(voice)
+      }
+      voiceRef.current = null
+      if (contextRef.current && contextRef.current.state !== 'closed') {
+        void contextRef.current.close()
+      }
+      contextRef.current = null
     }
-    voiceRef.current = null
-    if (contextRef.current && contextRef.current.state !== 'closed') {
-      void contextRef.current.close()
-    }
-    contextRef.current = null
   }, [])
 
   return {

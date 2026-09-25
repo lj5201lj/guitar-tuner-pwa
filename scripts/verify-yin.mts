@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { estimatePitchYin, nearestGuitarString } from '../src/audio/pitch.ts'
-import { pluckedStringDuration, synthesizePluckedString } from '../src/audio/pluckedString.ts'
+import { playbackRateForSample, selectNearestGuitarSample } from '../src/audio/guitarSamples.ts'
 import {
   BUILT_IN_TUNINGS,
   cloneAsCustom,
@@ -60,27 +60,14 @@ const restored = loadCustomTuning(storage)
 assert.equal(restored?.strings[0].note, 'B')
 assert.equal(restored?.strings[0].octave, 1)
 
-let randomSeed = 0x12345678
-const seededRandom = () => {
-  randomSeed = (randomSeed * 1664525 + 1013904223) >>> 0
-  return randomSeed / 0x1_0000_0000
+const exactE2Sample = selectNearestGuitarSample(noteToFrequency('E', 2))
+assert.equal(exactE2Sample.id, 'E2')
+assert.ok(Math.abs(playbackRateForSample(noteToFrequency('E', 2), exactE2Sample) - 1) < 0.0001)
+for (const [note, octave] of [['B', 1], ['E', 5]] as const) {
+  const frequency = noteToFrequency(note, octave)
+  const guitarSample = selectNearestGuitarSample(frequency)
+  const shiftInCents = Math.abs(1200 * Math.log2(playbackRateForSample(frequency, guitarSample)))
+  assert.ok(shiftInCents <= 300.1, `${note}${octave} requires too much sample transposition`)
 }
-const pluck = synthesizePluckedString(82.41, sampleRate, seededRandom)
-const windowRms = (samples: Float32Array, start: number, length: number) => {
-  let sum = 0
-  for (let index = start; index < start + length; index += 1) sum += samples[index] ** 2
-  return Math.sqrt(sum / length)
-}
-const quarterSecond = Math.round(sampleRate * 0.25)
-const earlyEnergy = windowRms(pluck, quarterSecond, quarterSecond)
-const lateEnergy = windowRms(pluck, pluck.length - quarterSecond, quarterSecond)
-const settledPluck = pluck.slice(Math.round(sampleRate * 0.08), Math.round(sampleRate * 0.08) + size)
-const synthesizedPitch = estimatePitchYin(settledPluck, sampleRate)
-assert.ok(pluck.every(Number.isFinite), 'Plucked string samples must be finite')
-assert.ok(Math.max(...pluck.subarray(0, sampleRate)) <= 0.721, 'Pluck must remain normalized')
-assert.ok(earlyEnergy > lateEnergy * 8, 'Plucked string must decay substantially')
-assert.ok(pluckedStringDuration(82.41) > pluckedStringDuration(329.63), 'Low strings should ring longer')
-assert.ok(synthesizedPitch, 'Plucked reference must have a detectable pitch')
-assert.ok(Math.abs(synthesizedPitch.frequency - 82.41) < 0.8, 'Plucked reference must stay in tune')
 
-console.log('YIN, tuning preset, custom storage, and plucked-string verification passed.')
+console.log('YIN, tuning preset, custom storage, and real guitar sample mapping verification passed.')
