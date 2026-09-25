@@ -4,8 +4,8 @@ import {
   centsFromTarget,
   estimatePitchYin,
   nearestGuitarString,
-  type GuitarString,
 } from './pitch'
+import { GUITAR_STRINGS, type GuitarString } from './tunings'
 
 export type TunerMode = 'auto' | 'manual'
 export type EngineState = 'idle' | 'requesting' | 'listening' | 'denied' | 'unsupported' | 'error'
@@ -39,13 +39,20 @@ const median = (values: number[]) => {
   return sorted[Math.floor(sorted.length / 2)]
 }
 
-export function useTuner(mode: TunerMode, manualString: GuitarString) {
+export function useTuner(
+  mode: TunerMode,
+  manualString: GuitarString,
+  strings: readonly GuitarString[] = GUITAR_STRINGS,
+  analysisPaused = false,
+) {
   const [engineState, setEngineState] = useState<EngineState>('idle')
   const [reading, setReading] = useState<TunerReading>(EMPTY_READING)
   const [errorMessage, setErrorMessage] = useState('')
 
   const modeRef = useRef(mode)
   const manualStringRef = useRef(manualString)
+  const stringsRef = useRef(strings)
+  const analysisPausedRef = useRef(analysisPaused)
   const streamRef = useRef<MediaStream | null>(null)
   const contextRef = useRef<AudioContext | null>(null)
   const frameRef = useRef<number | null>(null)
@@ -53,7 +60,13 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
   useEffect(() => {
     modeRef.current = mode
     manualStringRef.current = manualString
-  }, [manualString, mode])
+    stringsRef.current = strings
+  }, [manualString, mode, strings])
+
+  useEffect(() => {
+    analysisPausedRef.current = analysisPaused
+    if (analysisPaused) setReading(EMPTY_READING)
+  }, [analysisPaused])
 
   const releaseAudio = useCallback(() => {
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
@@ -112,10 +125,10 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
       const analyser = context.createAnalyser()
 
       highPass.type = 'highpass'
-      highPass.frequency.value = 65
+      highPass.frequency.value = 50
       highPass.Q.value = 0.72
       lowPass.type = 'lowpass'
-      lowPass.frequency.value = 1_200
+      lowPass.frequency.value = 1_800
       lowPass.Q.value = 0.72
       analyser.fftSize = 4096
       analyser.smoothingTimeConstant = 0
@@ -136,6 +149,14 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
       let lastAnalysisAt = 0
       let lastValidAt = 0
       let lastQuietRenderAt = 0
+      let wasPaused = analysisPausedRef.current
+
+      const resetAnalysis = () => {
+        pitchHistory.length = 0
+        smoothedPitch = null
+        pendingJumpFrames = 0
+        lastValidAt = 0
+      }
 
       const handleMissingPitch = (now: number, level: number) => {
         const timeSinceValidPitch = now - lastValidAt
@@ -162,6 +183,19 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
 
       const analyse = (now: number) => {
         frameRef.current = requestAnimationFrame(analyse)
+
+        if (analysisPausedRef.current) {
+          if (!wasPaused) resetAnalysis()
+          wasPaused = true
+          return
+        }
+
+        if (wasPaused) {
+          resetAnalysis()
+          wasPaused = false
+          setReading(EMPTY_READING)
+        }
+
         if (now - lastAnalysisAt < 65) return
         lastAnalysisAt = now
 
@@ -203,7 +237,7 @@ export function useTuner(mode: TunerMode, manualString: GuitarString) {
           : smoothedPitch * 0.72 + stablePitch * 0.28
 
         const target = modeRef.current === 'auto'
-          ? nearestGuitarString(smoothedPitch)
+          ? nearestGuitarString(smoothedPitch, stringsRef.current)
           : manualStringRef.current
 
         lastValidAt = now

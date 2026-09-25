@@ -1,25 +1,13 @@
-export type GuitarString = {
-  id: number
-  stringNumber: number
-  note: string
-  octave: number
-  frequency: number
-}
+import { GUITAR_STRINGS, type GuitarString } from './tunings.ts'
+
+export { GUITAR_STRINGS } from './tunings.ts'
+export type { GuitarString } from './tunings.ts'
 
 export type PitchEstimate = {
   frequency: number
   rms: number
   clarity: number
 }
-
-export const GUITAR_STRINGS: readonly GuitarString[] = [
-  { id: 0, stringNumber: 6, note: 'E', octave: 2, frequency: 82.41 },
-  { id: 1, stringNumber: 5, note: 'A', octave: 2, frequency: 110.0 },
-  { id: 2, stringNumber: 4, note: 'D', octave: 3, frequency: 146.83 },
-  { id: 3, stringNumber: 3, note: 'G', octave: 3, frequency: 196.0 },
-  { id: 4, stringNumber: 2, note: 'B', octave: 3, frequency: 246.94 },
-  { id: 5, stringNumber: 1, note: 'E', octave: 4, frequency: 329.63 },
-] as const
 
 export function calculateRms(buffer: Float32Array): number {
   let sum = 0
@@ -44,8 +32,8 @@ export function calculateRms(buffer: Float32Array): number {
 export function estimatePitchYin(
   buffer: Float32Array,
   sampleRate: number,
-  minFrequency = 65,
-  maxFrequency = 420,
+  minFrequency = 55,
+  maxFrequency = 700,
   threshold = 0.15,
 ): PitchEstimate | null {
   if (buffer.length < 1024 || sampleRate <= 0) return null
@@ -123,8 +111,11 @@ export function centsFromTarget(frequency: number, targetFrequency: number): num
   return 1200 * Math.log2(frequency / targetFrequency)
 }
 
-export function nearestGuitarString(frequency: number): GuitarString {
-  return GUITAR_STRINGS.reduce((closest, current) =>
+export function nearestGuitarString(
+  frequency: number,
+  strings: readonly GuitarString[] = GUITAR_STRINGS,
+): GuitarString {
+  return strings.reduce((closest, current) =>
     Math.abs(centsFromTarget(frequency, current.frequency)) <
     Math.abs(centsFromTarget(frequency, closest.frequency))
       ? current

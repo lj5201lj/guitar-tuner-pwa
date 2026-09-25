@@ -1,6 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GUITAR_STRINGS, type GuitarString } from './audio/pitch'
+import { useReferenceTone } from './audio/useReferenceTone'
 import { useTuner, type TunerMode } from './audio/useTuner'
+import {
+  BUILT_IN_TUNINGS,
+  cloneAsCustom,
+  createCustomTuning,
+  isCustomPitchInRange,
+  loadCustomTuning,
+  NOTE_OPTIONS,
+  noteToFrequency,
+  saveCustomTuning,
+  STANDARD_TUNING,
+  type GuitarString,
+  type GuitarStringNumber,
+  type NoteName,
+  type TuningPreset,
+} from './audio/tunings'
 
 interface InstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -60,9 +75,10 @@ function Meter({ cents, active, accurate }: { cents: number; active: boolean; ac
   )
 }
 
-function StringButton({ guitarString, active, onSelect }: {
+function StringButton({ guitarString, active, sounding, onSelect }: {
   guitarString: GuitarString
   active: boolean
+  sounding: boolean
   onSelect: () => void
 }) {
   return (
@@ -70,22 +86,165 @@ function StringButton({ guitarString, active, onSelect }: {
       className={`string-button ${active ? 'active' : ''}`}
       type="button"
       aria-pressed={active}
-      aria-label={`选择 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave}`}
+      aria-label={sounding
+        ? `停止 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave} 参考音`
+        : `选择并播放 ${guitarString.stringNumber} 弦 ${guitarString.note}${guitarString.octave} 参考音`}
       onClick={onSelect}
     >
       <span className="string-number">{guitarString.stringNumber}</span>
       <span className="string-note">{guitarString.note}</span>
       <span className="string-octave">{guitarString.octave}</span>
+      {sounding && <span className="string-sound" aria-hidden="true">♪</span>}
     </button>
+  )
+}
+
+function CustomTuningEditor({
+  initialTuning,
+  onCancel,
+  onSave,
+}: {
+  initialTuning: TuningPreset
+  onCancel: () => void
+  onSave: (tuning: TuningPreset) => void
+}) {
+  const [draft, setDraft] = useState<GuitarString[]>(() =>
+    initialTuning.strings.map((guitarString) => ({ ...guitarString })),
+  )
+  const [errorMessage, setErrorMessage] = useState('')
+  const octaves = [1, 2, 3, 4, 5]
+
+  const updateString = (
+    stringNumber: GuitarStringNumber,
+    next: { note?: NoteName; octave?: number },
+  ) => {
+    setDraft((current) => current.map((guitarString) => {
+      if (guitarString.stringNumber !== stringNumber) return guitarString
+      const note = next.note ?? guitarString.note
+      const octave = next.octave ?? guitarString.octave
+      return { ...guitarString, note, octave, frequency: noteToFrequency(note, octave) }
+    }))
+    setErrorMessage('')
+  }
+
+  const save = () => {
+    if (!draft.every(({ note, octave }) => isCustomPitchInRange(note, octave))) {
+      setErrorMessage('每根弦的音高需在 B1 到 E5 之间。')
+      return
+    }
+    try {
+      const tuning = createCustomTuning(draft)
+      saveCustomTuning(tuning)
+      onSave(tuning)
+    } catch {
+      setErrorMessage('浏览器无法保存此方案，请检查隐私或存储设置。')
+    }
+  }
+
+  return (
+    <div className="editor-backdrop" role="presentation" onMouseDown={onCancel}>
+      <section
+        className="tuning-editor"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="custom-tuning-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="editor-heading">
+          <div>
+            <p className="eyebrow">SPECIAL TUNING</p>
+            <h2 id="custom-tuning-title">自定义调弦</h2>
+          </div>
+          <button className="editor-close" type="button" onClick={onCancel} aria-label="关闭自定义调弦">×</button>
+        </div>
+
+        <p className="editor-hint">逐弦选择音名和八度，范围 B1–E5。重复音与非递增调弦均可使用。</p>
+
+        <div className="editor-strings">
+          {draft.map((guitarString) => (
+            <div className="editor-string-row" key={guitarString.stringNumber}>
+              <strong>{guitarString.stringNumber} 弦</strong>
+              <label>
+                <span className="sr-only">{guitarString.stringNumber} 弦音名</span>
+                <select
+                  value={guitarString.note}
+                  onChange={(event) => updateString(
+                    guitarString.stringNumber,
+                    { note: event.target.value as NoteName },
+                  )}
+                >
+                  {NOTE_OPTIONS.map((note) => (
+                    <option
+                      key={note}
+                      value={note}
+                      disabled={!isCustomPitchInRange(note, guitarString.octave)}
+                    >
+                      {note}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="sr-only">{guitarString.stringNumber} 弦八度</span>
+                <select
+                  value={guitarString.octave}
+                  onChange={(event) => updateString(
+                    guitarString.stringNumber,
+                    { octave: Number(event.target.value) },
+                  )}
+                >
+                  {octaves.map((octave) => (
+                    <option
+                      key={octave}
+                      value={octave}
+                      disabled={!isCustomPitchInRange(guitarString.note, octave)}
+                    >
+                      {octave}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="editor-frequency">{guitarString.frequency.toFixed(2)} Hz</span>
+            </div>
+          ))}
+        </div>
+
+        {errorMessage && <p className="editor-error" role="alert">{errorMessage}</p>}
+
+        <div className="editor-actions">
+          <button className="editor-cancel" type="button" onClick={onCancel}>取消</button>
+          <button className="editor-save" type="button" onClick={save}>保存并使用</button>
+        </div>
+      </section>
+    </div>
   )
 }
 
 export default function App() {
   const [mode, setMode] = useState<TunerMode>('auto')
-  const [manualString, setManualString] = useState<GuitarString>(GUITAR_STRINGS[0])
+  const [manualStringNumber, setManualStringNumber] = useState<GuitarStringNumber>(6)
+  const [activeTuningId, setActiveTuningId] = useState<TuningPreset['id']>('standard')
+  const [customTuning, setCustomTuning] = useState<TuningPreset | null>(() => loadCustomTuning())
+  const [editorInitialTuning, setEditorInitialTuning] = useState<TuningPreset | null>(null)
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
   const [showInstallHelp, setShowInstallHelp] = useState(false)
-  const { engineState, reading, errorMessage, start, stop } = useTuner(mode, manualString)
+  const tuningPresets = useMemo(
+    () => customTuning ? [...BUILT_IN_TUNINGS, customTuning] : [...BUILT_IN_TUNINGS],
+    [customTuning],
+  )
+  const activeTuning = tuningPresets.find((preset) => preset.id === activeTuningId) ?? STANDARD_TUNING
+  const manualString = activeTuning.strings.find(
+    (guitarString) => guitarString.stringNumber === manualStringNumber,
+  ) ?? activeTuning.strings[0]
+  const referenceTone = useReferenceTone()
+  const referenceString = referenceTone.activeString
+  const playReferenceTone = referenceTone.play
+  const { engineState, reading, errorMessage, start, stop } = useTuner(
+    mode,
+    manualString,
+    activeTuning.strings,
+    referenceTone.isPlaying,
+  )
 
   useEffect(() => {
     const capturePrompt = (event: Event) => {
@@ -101,14 +260,30 @@ export default function App() {
     }
   }, [])
 
-  const activeString = reading.hasSignal && reading.target
+  useEffect(() => {
+    if (!referenceString) return
+    const updatedString = activeTuning.strings.find(
+      (guitarString) => guitarString.stringNumber === referenceString.stringNumber,
+    )
+    if (
+      updatedString &&
+      Math.abs(updatedString.frequency - referenceString.frequency) > 0.001
+    ) {
+      void playReferenceTone(updatedString)
+    }
+  }, [activeTuning, playReferenceTone, referenceString])
+
+  const activeString = referenceTone.activeString
+    ?? (reading.hasSignal && reading.target
     ? reading.target
     : mode === 'manual'
       ? manualString
-      : null
+      : null)
   const cents = reading.cents ?? 0
-  const accurate = reading.hasSignal && Math.abs(cents) <= 5
-  const status = !reading.hasSignal
+  const accurate = !referenceTone.isPlaying && reading.hasSignal && Math.abs(cents) <= 5
+  const status = referenceTone.activeString
+    ? `参考音 ${referenceTone.activeString.note}${referenceTone.activeString.octave} 播放中`
+    : !reading.hasSignal
     ? engineState === 'listening' ? '弹响一根琴弦' : '等待开始'
     : accurate ? '准确' : cents < 0 ? '偏低' : '偏高'
 
@@ -122,8 +297,18 @@ export default function App() {
     }
   }
 
+  const openCustomEditor = () => {
+    setEditorInitialTuning(customTuning ?? cloneAsCustom(activeTuning))
+  }
+
+  const saveCustom = (tuning: TuningPreset) => {
+    setCustomTuning(tuning)
+    setActiveTuningId('custom')
+    setEditorInitialTuning(null)
+  }
+
   return (
-    <main className={`app-shell status-${accurate ? 'accurate' : cents < -5 ? 'flat' : cents > 5 ? 'sharp' : 'idle'}`}>
+    <main className={`app-shell status-${referenceTone.isPlaying ? 'tone' : accurate ? 'accurate' : cents < -5 ? 'flat' : cents > 5 ? 'sharp' : 'idle'}`}>
       <header className="topbar">
         <div className="identity">
           <span className="brand-mark" aria-hidden="true">♯</span>
@@ -149,13 +334,13 @@ export default function App() {
           <button className={mode === 'manual' ? 'selected' : ''} type="button" onClick={() => setMode('manual')}>手动</button>
         </div>
 
-        <div className={`note-display ${reading.hasSignal ? '' : 'muted'}`}>
+        <div className={`note-display ${activeString ? '' : 'muted'}`}>
           <span className="note-name">{activeString?.note ?? '—'}</span>
           {activeString && <span className="note-octave">{activeString.octave}</span>}
           <span className="note-string">{activeString ? `${activeString.stringNumber} 弦` : '等待声音'}</span>
         </div>
 
-        <Meter cents={cents} active={reading.hasSignal} accurate={accurate} />
+        <Meter cents={cents} active={!referenceTone.isPlaying && reading.hasSignal} accurate={accurate} />
 
         <div className="status-line" aria-live="polite">
           <span className="status-dot" aria-hidden="true" />
@@ -178,6 +363,12 @@ export default function App() {
           <div className="level-track"><div className="level-fill" style={{ width: `${reading.level * 100}%` }} /></div>
         </div>
 
+        {referenceTone.isPlaying && (
+          <button className="reference-stop" type="button" onClick={referenceTone.stop}>
+            <span aria-hidden="true">■</span> 停止参考音
+          </button>
+        )}
+
         <div className="engine-control">
           {engineState === 'listening' ? (
             <button className="stop-button" type="button" onClick={stop}>
@@ -190,28 +381,55 @@ export default function App() {
             </button>
           )}
           {errorMessage && <p className="error-message" role="alert">{errorMessage}</p>}
+          {referenceTone.errorMessage && <p className="error-message" role="alert">{referenceTone.errorMessage}</p>}
         </div>
       </section>
 
       <section className="strings" aria-label="六根吉他弦">
+        <div className="tuning-toolbar">
+          <label className="tuning-select">
+            <span>调弦方案</span>
+            <select
+              value={activeTuning.id}
+              onChange={(event) => setActiveTuningId(event.target.value as TuningPreset['id'])}
+            >
+              {tuningPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.name}</option>
+              ))}
+            </select>
+          </label>
+          <button className="custom-tuning-button" type="button" onClick={openCustomEditor}>
+            {customTuning ? '编辑自定义' : '新建自定义'}
+          </button>
+        </div>
         <div className="strings-heading">
-          <span>标准调弦</span>
-          <span>{mode === 'auto' ? '自动识别' : '点击选择琴弦'}</span>
+          <span>{activeTuning.name}</span>
+          <span>{referenceTone.isPlaying ? '再点当前弦停止' : mode === 'auto' ? '自动识别' : '点弦播放参考音'}</span>
         </div>
         <div className="string-grid">
-          {GUITAR_STRINGS.map((guitarString) => (
+          {activeTuning.strings.map((guitarString) => (
             <StringButton
               key={guitarString.id}
               guitarString={guitarString}
               active={activeString?.id === guitarString.id}
+              sounding={referenceTone.activeString?.stringNumber === guitarString.stringNumber}
               onSelect={() => {
-                setManualString(guitarString)
+                setManualStringNumber(guitarString.stringNumber)
                 setMode('manual')
+                referenceTone.toggle(guitarString)
               }}
             />
           ))}
         </div>
       </section>
+
+      {editorInitialTuning && (
+        <CustomTuningEditor
+          initialTuning={editorInitialTuning}
+          onCancel={() => setEditorInitialTuning(null)}
+          onSave={saveCustom}
+        />
+      )}
     </main>
   )
 }
