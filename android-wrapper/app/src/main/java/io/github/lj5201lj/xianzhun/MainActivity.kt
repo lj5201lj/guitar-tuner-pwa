@@ -90,7 +90,7 @@ class MainActivity : Activity() {
 
     private fun buildInterface(): View {
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(background)
+            setBackgroundColor(this@MainActivity.background)
             isFillViewport = true
             clipToPadding = false
         }
