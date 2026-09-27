@@ -1,0 +1,6 @@
+Acoustic guitar samples from tonejs-instruments:
+https://github.com/nbrosowsky/tonejs-instruments
+
+Original recording source: University of Iowa Electronic Music Studios.
+Licensed under Creative Commons Attribution 3.0 (CC BY 3.0):
+https://creativecommons.org/licenses/by/3.0/

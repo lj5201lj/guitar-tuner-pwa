@@ -1,7 +1,12 @@
-name: Build Android APK
+name: Build native Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android-wrapper/**'
+      - '.github/workflows/build-android-apk.yml'
 
 permissions:
   contents: read
@@ -36,7 +41,10 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/xianzhun-signing.p12"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/xianzhun-signing.p12" >> "$GITHUB_ENV"
 
-      - name: Build signed release APK
+      - name: Run native pitch tests
+        run: gradle -p android-wrapper :app:testReleaseUnitTest --stacktrace
+
+      - name: Build signed native release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -56,7 +64,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: xianzhun-guitar-tuner-apk
+          name: xianzhun-native-guitar-tuner-apk
           path: apk-output
           if-no-files-found: error
           retention-days: 30

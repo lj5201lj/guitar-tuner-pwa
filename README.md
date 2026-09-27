@@ -2,6 +2,17 @@
 
 一个无需后端的移动端吉他调音器，使用 React、TypeScript、Web Audio API 和 YIN 算法实现。
 
+## Android 原生版
+
+`android-wrapper/` 从 2.0.0 起是独立的 Kotlin 原生 Android 应用，不是网站封装：
+
+- UI 和麦克风采集均由 Android 原生 API 实现。
+- 调音使用 `AudioRecord` 读取 PCM，并通过 YIN 算法检测音高。
+- 页面、算法与吉他参考音均打入 APK，运行时不访问 GitHub Pages，可完全离线使用。
+- Android 6.0 及以上可安装；首次使用需要授予麦克风权限。
+
+网页 PWA 与 Android 原生版是两个独立前端，PWA 仍保留在 `src/` 和 `public/`。
+
 ## 本地运行
 
 ```bash
