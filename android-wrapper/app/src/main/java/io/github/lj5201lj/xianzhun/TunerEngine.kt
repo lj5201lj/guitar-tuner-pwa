@@ -35,11 +35,7 @@ class TunerEngine(
     fun start(): Result<String> {
         stop()
         return runCatching {
-            val (record, sampleRate, sourceName) = createAudioRecord()
-            record.startRecording()
-            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                "系统未能启动录音，请关闭其他录音应用后重试。"
-            }
+            val (record, sampleRate, sourceName) = createStartedAudioRecord()
             audioRecord = record
             running.set(true)
             paused.set(false)
@@ -67,7 +63,7 @@ class TunerEngine(
     }
 
     @SuppressLint("MissingPermission")
-    private fun createAudioRecord(): RecorderConfiguration {
+    private fun createStartedAudioRecord(): RecorderConfiguration {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val supportsUnprocessed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
             audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
@@ -101,12 +97,17 @@ class TunerEngine(
                 }.getOrNull() ?: continue
 
                 if (record.state == AudioRecord.STATE_INITIALIZED) {
-                    return RecorderConfiguration(record, rate, sourceName)
+                    val started = runCatching {
+                        record.startRecording()
+                        record.recordingState == AudioRecord.RECORDSTATE_RECORDING
+                    }.getOrDefault(false)
+                    if (started) return RecorderConfiguration(record, rate, sourceName)
                 }
+                runCatching { record.stop() }
                 record.release()
             }
         }
-        error("这台设备没有可用的麦克风录音配置。")
+        error("系统未能启动录音，请关闭其他录音应用后重试。")
     }
 
     private fun captureLoop(record: AudioRecord, sampleRate: Int) {
