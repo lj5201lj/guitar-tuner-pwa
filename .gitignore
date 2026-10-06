@@ -3,6 +3,7 @@ dist
 .sites-runtime
 .tools
 android-wrapper/.gradle
+android-wrapper/.kotlin
 android-wrapper/**/build
 android-wrapper/local.properties
 *.local

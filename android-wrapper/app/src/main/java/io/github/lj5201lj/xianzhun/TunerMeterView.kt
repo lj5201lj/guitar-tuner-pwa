@@ -49,11 +49,19 @@ class TunerMeterView @JvmOverloads constructor(
     private var readingActive = false
     private var accurate = false
     private var animator: ValueAnimator? = null
+    private val arc = RectF()
 
     fun setReading(cents: Double, active: Boolean, isAccurate: Boolean) {
+        val stateChanged = readingActive != active || accurate != isAccurate
         readingActive = active
         accurate = isAccurate
         val target = cents.toFloat().coerceIn(-50f, 50f)
+        if (target == displayedCents) {
+            animator?.cancel()
+            animator = null
+            if (stateChanged) invalidate()
+            return
+        }
         animator?.cancel()
         animator = ValueAnimator.ofFloat(displayedCents, target).apply {
             duration = 150
@@ -70,9 +78,10 @@ class TunerMeterView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val centerX = width / 2f
-        val centerY = height * 0.83f
-        val radius = minOf(width * 0.39f, height * 0.72f)
-        val arc = RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
+        // Reserve label baselines explicitly so 0 / ±50 remain visible in compact portrait layouts.
+        val centerY = height - 24f * density
+        val radius = minOf(width * 0.39f, (centerY - 24f * density).coerceAtLeast(1f))
+        arc.set(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
         canvas.drawArc(arc, 200f, 140f, false, trackPaint)
         canvas.drawArc(arc, 263f, 14f, false, accuratePaint)
 
@@ -100,9 +109,9 @@ class TunerMeterView @JvmOverloads constructor(
         canvas.drawLine(centerX, centerY, endX, endY, needlePaint)
         canvas.drawCircle(centerX, centerY, 7f * density, needlePaint)
 
-        canvas.drawText("−50", centerX - radius, centerY + 24f * density, labelPaint)
-        canvas.drawText("0", centerX, centerY - radius - 10f * density, labelPaint)
-        canvas.drawText("+50", centerX + radius, centerY + 24f * density, labelPaint)
+        canvas.drawText("−50", centerX - radius, centerY + 18f * density, labelPaint)
+        canvas.drawText("0", centerX, centerY - radius - 9f * density, labelPaint)
+        canvas.drawText("+50", centerX + radius, centerY + 18f * density, labelPaint)
     }
 
     override fun onDetachedFromWindow() {

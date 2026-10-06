@@ -3,6 +3,8 @@ package io.github.lj5201lj.xianzhun
 import android.content.Context
 import android.media.MediaPlayer
 import android.media.PlaybackParams
+import android.os.Handler
+import android.os.Looper
 import kotlin.math.abs
 
 class ReferenceTonePlayer(private val context: Context) {
@@ -27,6 +29,7 @@ class ReferenceTonePlayer(private val context: Context) {
 
     private var player: MediaPlayer? = null
     private var completion: (() -> Unit)? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     fun play(string: GuitarString, onFinished: () -> Unit): Result<Unit> = runCatching {
         stop(notify = false)
@@ -38,24 +41,37 @@ class ReferenceTonePlayer(private val context: Context) {
         player = next
         next.setVolume(0.92f, 0.92f)
         val pitchRatio = (string.frequency / sample.frequency).toFloat().coerceIn(0.5f, 2.0f)
-        runCatching {
-            next.playbackParams = PlaybackParams()
-                .setSpeed(1.0f)
-                .setPitch(pitchRatio)
-        }
         next.setOnCompletionListener {
-            stop(notify = true)
+            if (player === next) stop(notify = true)
         }
         next.setOnErrorListener { _, _, _ ->
-            stop(notify = true)
+            if (player === next) stop(notify = true)
             true
         }
+        // MediaPlayer may start while changing PlaybackParams; start the one-second clock after it.
+        next.playbackParams = PlaybackParams().setSpeed(1.0f).setPitch(pitchRatio)
         next.start()
+        // A short fade within the final 60 ms avoids a hard cut at the one-second limit.
+        for (step in 1..6) {
+            handler.postDelayed({
+                if (player === next) {
+                    val volume = 0.92f * (1f - step / 6f)
+                    runCatching { next.setVolume(volume, volume) }
+                }
+            }, PLAY_DURATION_MS - 60L + step * 10L)
+        }
+        handler.postDelayed({
+            if (player === next) stop(notify = true)
+        }, PLAY_DURATION_MS)
+        Unit
+    }.onFailure {
+        stop(notify = false)
     }
 
     fun stop(notify: Boolean = true) {
         val callback = completion
         completion = null
+        handler.removeCallbacksAndMessages(null)
         player?.setOnCompletionListener(null)
         player?.setOnErrorListener(null)
         runCatching { player?.stop() }
@@ -65,4 +81,8 @@ class ReferenceTonePlayer(private val context: Context) {
     }
 
     fun release() = stop(notify = false)
+
+    companion object {
+        const val PLAY_DURATION_MS = 1_000L
+    }
 }

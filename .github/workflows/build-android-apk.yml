@@ -27,12 +27,12 @@ jobs:
       - name: Install Android platform
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
+          gradle-version: '9.6.0'
 
       - name: Restore signing key
         env:
@@ -41,15 +41,15 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/xianzhun-signing.p12"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/xianzhun-signing.p12" >> "$GITHUB_ENV"
 
-      - name: Run native pitch tests
-        run: gradle -p android-wrapper :app:testReleaseUnitTest --stacktrace
+      - name: Run pitch, audio isolation and metronome tests
+        run: gradle -p android-wrapper :app:testDebugUnitTest --stacktrace
 
       - name: Build signed native release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: gradle -p android-wrapper :app:assembleRelease --stacktrace
+        run: gradle -p android-wrapper :app:lintRelease :app:assembleRelease --stacktrace
 
       - name: Prepare installation package
         env:

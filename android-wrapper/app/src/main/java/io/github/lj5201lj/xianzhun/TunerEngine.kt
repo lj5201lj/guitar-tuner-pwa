@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.SystemClock
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.PI
@@ -19,6 +20,7 @@ data class AudioUpdate(
     val clarity: Double,
     val hasSignal: Boolean,
     val level: Double,
+    val analysisGeneration: Long,
 )
 
 class TunerEngine(
@@ -26,21 +28,24 @@ class TunerEngine(
     private val onUpdate: (AudioUpdate) -> Unit,
     private val onError: (String) -> Unit,
 ) {
-    private val running = AtomicBoolean(false)
-    private val paused = AtomicBoolean(false)
-    private var audioRecord: AudioRecord? = null
-    private var worker: Thread? = null
+    private class Session(val record: AudioRecord) {
+        val active = AtomicBoolean(true)
+        var worker: Thread? = null
+    }
+
+    private val analysisGate = AudioAnalysisGate()
+    @Volatile private var currentSession: Session? = null
 
     @SuppressLint("MissingPermission")
     fun start(): Result<String> {
         stop()
         return runCatching {
             val (record, sampleRate, sourceName) = createStartedAudioRecord()
-            audioRecord = record
-            running.set(true)
-            paused.set(false)
-            worker = thread(name = "xianzhun-pitch", start = true) {
-                captureLoop(record, sampleRate)
+            val session = Session(record)
+            currentSession = session
+            analysisGate.resume(SystemClock.elapsedRealtime())
+            session.worker = thread(name = "xianzhun-pitch", start = true) {
+                captureLoop(session, sampleRate)
             }
             "$sourceName · ${sampleRate / 1000.0} kHz"
         }.onFailure {
@@ -48,18 +53,22 @@ class TunerEngine(
         }
     }
 
-    fun setPaused(value: Boolean) {
-        paused.set(value)
+    fun setPaused(value: Boolean, settleMs: Long = 0L) {
+        if (value) analysisGate.pause()
+        else analysisGate.resume(SystemClock.elapsedRealtime(), settleMs)
     }
 
+    fun accepts(update: AudioUpdate): Boolean = currentSession?.active?.get() == true &&
+        analysisGate.accepts(update.analysisGeneration, SystemClock.elapsedRealtime())
+
     fun stop() {
-        running.set(false)
-        paused.set(false)
-        runCatching { audioRecord?.stop() }
-        runCatching { audioRecord?.release() }
-        audioRecord = null
-        worker?.interrupt()
-        worker = null
+        analysisGate.pause()
+        val session = currentSession ?: return
+        currentSession = null
+        session.active.set(false)
+        runCatching { session.record.stop() }
+        session.worker?.interrupt()
+        // The capture thread releases its own recorder; a previous session cannot stop a new one.
     }
 
     @SuppressLint("MissingPermission")
@@ -110,7 +119,8 @@ class TunerEngine(
         error("系统未能启动录音，请关闭其他录音应用后重试。")
     }
 
-    private fun captureLoop(record: AudioRecord, sampleRate: Int) {
+    private fun captureLoop(session: Session, sampleRate: Int) {
+        val record = session.record
         val windowSize = if (sampleRate >= 32_000) 8192 else 4096
         val readSize = 1024
         val analysisHop = max(1024, sampleRate / 15)
@@ -132,7 +142,7 @@ class TunerEngine(
         var smoothedPitch: Double? = null
         var pendingJumpFrames = 0
         var noiseFloor = 0.0012
-        var wasPaused = false
+        var previousGeneration: Long? = null
 
         fun resetAnalysis() {
             ring.fill(0f)
@@ -142,22 +152,29 @@ class TunerEngine(
             pitchHistory.clear()
             smoothedPitch = null
             pendingJumpFrames = 0
+            highPreviousInput = 0.0
+            highPreviousOutput = 0.0
+            lowPreviousOutput = 0.0
+            noiseFloor = 0.0012
         }
 
         try {
-            while (running.get()) {
+            while (session.active.get()) {
+                val beforeRead = analysisGate.token(SystemClock.elapsedRealtime())
                 val count = record.read(shorts, 0, shorts.size, AudioRecord.READ_BLOCKING)
                 if (count < 0) error("麦克风读取失败（$count）。")
                 if (count == 0) continue
 
-                if (paused.get()) {
-                    if (!wasPaused) resetAnalysis()
-                    wasPaused = true
+                val generation = analysisGate.token(SystemClock.elapsedRealtime())
+                // Keep draining PCM while blocked, including buffers spanning the resume boundary.
+                if (generation == null || generation != beforeRead) {
+                    if (previousGeneration != null) resetAnalysis()
+                    previousGeneration = null
                     continue
                 }
-                if (wasPaused) {
+                if (generation != previousGeneration) {
                     resetAnalysis()
-                    wasPaused = false
+                    previousGeneration = generation
                 }
 
                 for (index in 0 until count) {
@@ -184,7 +201,7 @@ class TunerEngine(
                 val level = ((rms - 0.0015) / 0.055).coerceIn(0.0, 1.0)
                 if (rms < gate) {
                     noiseFloor = (noiseFloor * 0.94 + rms * 0.06).coerceIn(0.0007, 0.012)
-                    onUpdate(AudioUpdate(null, rms, 0.0, false, level))
+                    onUpdate(AudioUpdate(null, rms, 0.0, false, level, generation))
                     continue
                 }
 
@@ -200,7 +217,7 @@ class TunerEngine(
                     if (rms < noiseFloor * 1.7) {
                         noiseFloor = (noiseFloor * 0.98 + rms * 0.02).coerceIn(0.0007, 0.012)
                     }
-                    onUpdate(AudioUpdate(null, rms, estimate?.clarity ?: 0.0, true, level))
+                    onUpdate(AudioUpdate(null, rms, estimate?.clarity ?: 0.0, true, level, generation))
                     continue
                 }
 
@@ -228,16 +245,19 @@ class TunerEngine(
                         clarity = estimate.clarity,
                         hasSignal = true,
                         level = level,
+                        analysisGeneration = generation,
                     ),
                 )
             }
         } catch (error: Throwable) {
-            if (running.get()) onError(error.message ?: "麦克风读取发生错误。")
+            if (session.active.get() && currentSession === session) {
+                onError(error.message ?: "麦克风读取发生错误。")
+            }
         } finally {
-            running.set(false)
+            session.active.set(false)
             runCatching { record.stop() }
             runCatching { record.release() }
-            if (audioRecord === record) audioRecord = null
+            if (currentSession === session) currentSession = null
         }
     }
 

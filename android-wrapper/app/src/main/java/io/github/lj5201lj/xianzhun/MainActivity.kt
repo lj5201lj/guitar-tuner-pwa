@@ -3,18 +3,25 @@ package io.github.lj5201lj.xianzhun
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import android.media.AudioManager
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.WindowInsets
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -43,7 +50,6 @@ class MainActivity : Activity() {
     private lateinit var autoButton: Button
     private lateinit var manualButton: Button
     private lateinit var presetSpinner: Spinner
-    private lateinit var stopToneButton: Button
     private lateinit var signalLevel: ProgressBar
     private lateinit var meter: TunerMeterView
     private lateinit var engineInfoText: TextView
@@ -56,6 +62,15 @@ class MainActivity : Activity() {
     private var autoMode = true
     private var listening = false
     private var referencePlaying = false
+    private var referenceSettling = false
+    private val handler = Handler(Looper.getMainLooper())
+    private var pendingRecovery: Runnable? = null
+    private var tunerPageSelected = true
+    private lateinit var tunerPage: View
+    private lateinit var metronomePanel: MetronomePanel
+    private lateinit var tunerTab: Button
+    private lateinit var metronomeTab: Button
+    private lateinit var playbackFocus: PlaybackFocus
     private var lastValidAt = 0L
     private var changingPresetProgrammatically = false
 
@@ -80,15 +95,96 @@ class MainActivity : Activity() {
             onError = { message -> runOnUiThread { showEngineError(message) } },
         )
         referenceTonePlayer = ReferenceTonePlayer(this)
+        playbackFocus = PlaybackFocus(getSystemService(Context.AUDIO_SERVICE) as AudioManager) {
+            metronomePanel.stop()
+            if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = true)
+        }
 
         setContentView(buildInterface())
         refreshPresetSpinner()
         updateModeUi()
         updateStringButtons()
-        clearReading("点击“开启麦克风”，然后逐根拨弦")
+        clearReading("点击“开始调音”，然后逐根拨弦")
     }
 
     private fun buildInterface(): View {
+        val shell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(this@MainActivity.background)
+            setOnApplyWindowInsetsListener { view, insets ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                    view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                } else {
+                    @Suppress("DEPRECATION")
+                    view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                        insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                }
+                insets
+            }
+        }
+        val tabs = LinearLayout(this).apply { setPadding(dp(18), dp(8), dp(18), dp(6)) }
+        tunerTab = Button(this).apply {
+            text = "调音器"
+            isAllCaps = false
+            setOnClickListener { selectPage(tuner = true) }
+        }
+        metronomeTab = Button(this).apply {
+            text = "节拍器"
+            isAllCaps = false
+            setOnClickListener { selectPage(tuner = false) }
+        }
+        tabs.addView(tunerTab, LinearLayout.LayoutParams(0, dp(46), 1f))
+        tabs.addView(metronomeTab, marginParams(width = 0, height = 46, weight = 1f, left = 8))
+        shell.addView(tabs)
+        val pages = FrameLayout(this)
+        tunerPage = buildTunerInterface()
+        metronomePanel = MetronomePanel(this,
+            beforeStart = {
+                if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = false)
+                if (listening) stopListening()
+                playbackFocus.acquire()
+            },
+            onPlayingChanged = { playing ->
+                if (!playing) playbackFocus.release()
+                updateKeepScreenOn()
+            },
+        ).apply { visibility = View.GONE }
+        pages.addView(tunerPage, FrameLayout.LayoutParams(-1, -1))
+        pages.addView(metronomePanel, FrameLayout.LayoutParams(-1, -1))
+        shell.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
+        styleTab(tunerTab, true)
+        styleTab(metronomeTab, false)
+        return shell
+    }
+
+    private fun selectPage(tuner: Boolean) {
+        if (tuner == tunerPageSelected) return
+        if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = false)
+        if (listening) stopListening()
+        metronomePanel.stop()
+        tunerPageSelected = tuner
+        tunerPage.visibility = if (tuner) View.VISIBLE else View.GONE
+        metronomePanel.visibility = if (tuner) View.GONE else View.VISIBLE
+        styleTab(tunerTab, tuner)
+        styleTab(metronomeTab, !tuner)
+        updateKeepScreenOn()
+    }
+
+    private fun styleTab(button: Button, selected: Boolean) {
+        button.setTextColor(if (selected) Color.rgb(20, 23, 18) else textMuted)
+        button.background = rounded(if (selected) primary else surface, 13)
+        button.isSelected = selected
+    }
+
+    private fun updateKeepScreenOn() {
+        if (listening || referencePlaying || metronomePanel.playing) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun buildTunerInterface(): View {
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val scroll = ScrollView(this).apply {
             setBackgroundColor(this@MainActivity.background)
             isFillViewport = true
@@ -96,22 +192,15 @@ class MainActivity : Activity() {
         }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(24))
+            setPadding(dp(18), dp(6), dp(18), dp(6))
         }
         scroll.addView(root, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-
-        root.addView(TextView(this).apply {
-            text = "弦准"
-            setTextColor(textPrimary)
-            textSize = 30f
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.08f
-        })
-        root.addView(TextView(this).apply {
-            text = "原生吉他调音器 · YIN 实时检测"
-            setTextColor(textMuted)
-            textSize = 13f
-        }, marginParams(top = 2, bottom = 14))
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val transport = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(10))
+        }
+        panel.addView(transport)
 
         val tuningRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -173,7 +262,7 @@ class MainActivity : Activity() {
         val readingCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(14), dp(14), dp(14), dp(10))
+            setPadding(dp(14), dp(10), dp(14), dp(8))
             background = rounded(surface, 20)
         }
         val noteRow = LinearLayout(this).apply {
@@ -182,7 +271,7 @@ class MainActivity : Activity() {
         noteText = TextView(this).apply {
             text = "—"
             setTextColor(textPrimary)
-            textSize = 70f
+            textSize = 50f
             gravity = Gravity.CENTER
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
@@ -194,7 +283,7 @@ class MainActivity : Activity() {
         }
         noteRow.addView(noteText)
         noteRow.addView(octaveText)
-        readingCard.addView(noteRow, ViewGroup.LayoutParams.MATCH_PARENT, dp(86))
+        readingCard.addView(noteRow, ViewGroup.LayoutParams.MATCH_PARENT, dp(60))
 
         frequencyText = TextView(this).apply {
             text = "— Hz"
@@ -205,12 +294,12 @@ class MainActivity : Activity() {
         readingCard.addView(frequencyText)
 
         meter = TunerMeterView(this)
-        readingCard.addView(meter, ViewGroup.LayoutParams.MATCH_PARENT, dp(190))
+        readingCard.addView(meter, ViewGroup.LayoutParams.MATCH_PARENT, dp(120))
 
         centsText = TextView(this).apply {
             text = "— cents"
             setTextColor(textPrimary)
-            textSize = 27f
+            textSize = 24f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
@@ -241,7 +330,7 @@ class MainActivity : Activity() {
         root.addView(readingCard, marginParams(top = 12))
 
         microphoneButton = Button(this).apply {
-            text = "开启麦克风"
+            text = "开始调音"
             isAllCaps = false
             textSize = 17f
             typeface = Typeface.DEFAULT_BOLD
@@ -251,14 +340,14 @@ class MainActivity : Activity() {
                 if (listening) stopListening() else requestMicrophoneAndStart()
             }
         }
-        root.addView(microphoneButton, marginParams(width = -1, height = 54, top = 12))
+        transport.addView(microphoneButton, marginParams(width = -1, height = 50))
 
-        root.addView(TextView(this).apply {
-            text = "点选琴弦可播放真实吉他参考音，并切换到手动模式"
+        transport.addView(TextView(this).apply {
+            text = "点选琴弦试听 1 秒参考音，结束后自动恢复识别"
             setTextColor(textMuted)
             textSize = 12f
             gravity = Gravity.CENTER
-        }, marginParams(top = 14, bottom = 8))
+        }, marginParams(top = 8, bottom = 6))
 
         val stringsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -282,31 +371,14 @@ class MainActivity : Activity() {
                 }
             }
             stringButtons[number] = button
-            stringsRow.addView(button, marginParams(width = 0, height = 64, weight = 1f, left = if (number == 6) 0 else 4))
+            stringsRow.addView(button, marginParams(width = 0, height = 58, weight = 1f, left = if (number == 6) 0 else 4))
         }
-        root.addView(stringsRow)
-
-        stopToneButton = Button(this).apply {
-            text = "停止参考音"
-            isAllCaps = false
-            visibility = View.GONE
-            setTextColor(gold)
-            background = rounded(surface, 12, gold)
-            setOnClickListener { stopReferenceTone(resumeDetection = true) }
-        }
-        root.addView(stopToneButton, marginParams(width = -1, height = 46, top = 8))
-
-        root.addView(TextView(this).apply {
-            text = "建议：靠近手机底部麦克风，单独拨一根弦，拨弦后停顿约 1 秒。"
-            setTextColor(textMuted)
-            textSize = 12f
-            gravity = Gravity.CENTER
-        }, marginParams(top = 12))
-
-        return scroll
+        transport.addView(stringsRow)
+        return panel
     }
 
     private fun requestMicrophoneAndStart() {
+        if (!tunerPageSelected) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startListening()
         } else {
@@ -321,6 +393,7 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQUEST_RECORD_AUDIO) return
+        if (!tunerPageSelected || isFinishing || isDestroyed) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             startListening()
         } else {
@@ -337,19 +410,22 @@ class MainActivity : Activity() {
     }
 
     private fun startListening() {
-        if (referencePlaying) stopReferenceTone(resumeDetection = false)
+        if (!tunerPageSelected) return
         statusText.setTextColor(textMuted)
         statusText.text = "正在启动麦克风…"
         val result = tunerEngine.start()
         if (result.isSuccess) {
             listening = true
             lastValidAt = 0L
-            microphoneButton.text = "停止麦克风"
+            microphoneButton.text = "停止调音"
             microphoneButton.setTextColor(textPrimary)
             microphoneButton.background = rounded(surfaceRaised, 15, gold)
             engineInfoText.text = result.getOrNull()
-            statusText.text = "正在听，请单独拨响一根弦"
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (referencePlaying || referenceSettling) {
+                tunerEngine.setPaused(true)
+                statusText.text = "参考音结束后自动开始识别"
+            } else statusText.text = "正在听，请单独拨响一根弦"
+            updateKeepScreenOn()
         } else {
             showEngineError(result.exceptionOrNull()?.message ?: "无法启动麦克风")
         }
@@ -360,43 +436,37 @@ class MainActivity : Activity() {
         listening = false
         lastValidAt = 0L
         signalLevel.progress = 0
-        microphoneButton.text = "开启麦克风"
+        microphoneButton.text = "开始调音"
         microphoneButton.setTextColor(Color.rgb(20, 23, 18))
         microphoneButton.background = rounded(primary, 15)
         engineInfoText.text = "麦克风已停止"
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        updateKeepScreenOn()
         clearReading("麦克风已停止")
     }
 
     private fun showEngineError(message: String) {
         tunerEngine.stop()
         listening = false
-        microphoneButton.text = "重试麦克风"
+        microphoneButton.text = "重试调音"
         microphoneButton.setTextColor(Color.rgb(20, 23, 18))
         microphoneButton.background = rounded(primary, 15)
         engineInfoText.text = "录音启动失败"
         clearReading(message)
         statusText.setTextColor(errorColor)
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        updateKeepScreenOn()
     }
 
     private fun renderAudioUpdate(update: AudioUpdate) {
-        if (!listening || referencePlaying) return
+        if (!listening || !tunerPageSelected || referencePlaying || referenceSettling || !tunerEngine.accepts(update)) return
         signalLevel.progress = (update.level * 1000).toInt()
         val frequency = update.frequency
         if (frequency == null) {
             if (SystemClock.elapsedRealtime() - lastValidAt < READING_HOLD_MS) return
-            noteText.text = "—"
-            octaveText.text = ""
-            frequencyText.text = "— Hz"
-            centsText.text = "— cents"
-            meter.setReading(0.0, active = false, isAccurate = false)
-            statusText.setTextColor(textMuted)
-            statusText.text = if (update.hasSignal) {
+            clearReading(if (update.hasSignal) {
                 "已收到声音，正在稳定音高…"
             } else {
                 "输入较轻，请靠近麦克风并单独拨一根弦"
-            }
+            })
             return
         }
 
@@ -428,23 +498,33 @@ class MainActivity : Activity() {
     }
 
     private fun clearReading(message: String) {
-        noteText.text = "—"
-        octaveText.text = ""
-        frequencyText.text = "— Hz"
-        centsText.text = "— cents"
+        fun TextView.show(value: String) { if (text.toString() != value) text = value }
+        noteText.show("—")
+        octaveText.show("")
+        frequencyText.show("— Hz")
+        centsText.show("— cents")
         centsText.setTextColor(textPrimary)
         statusText.setTextColor(textMuted)
-        statusText.text = message
+        statusText.show(message)
         meter.setReading(0.0, active = false, isAccurate = false)
     }
 
     private fun playReferenceTone(string: GuitarString) {
+        if (!tunerPageSelected) return
+        if (!playbackFocus.acquire()) {
+            Toast.makeText(this, "暂时无法播放参考音，请稍后重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        cancelReferenceRecovery()
         referenceTonePlayer.stop(notify = false)
         referencePlaying = true
+        referenceSettling = false
         tunerEngine.setPaused(true)
-        stopToneButton.visibility = View.VISIBLE
+        signalLevel.progress = 0
+        lastValidAt = 0L
+        updateKeepScreenOn()
         updateStringButtons()
-        clearReading("参考音 ${string.displayName()} 播放中；识别已暂时暂停")
+        clearReading("参考音 ${string.displayName()} · 1 秒后自动结束")
         noteText.text = string.note
         octaveText.text = string.octave.toString()
         frequencyText.text = String.format(Locale.US, "参考音 %.2f Hz", string.frequency)
@@ -457,24 +537,44 @@ class MainActivity : Activity() {
     }
 
     private fun stopReferenceTone(resumeDetection: Boolean) {
+        cancelReferenceRecovery()
         referenceTonePlayer.stop(notify = false)
         referencePlaying = false
-        stopToneButton.visibility = View.GONE
+        referenceSettling = false
+        playbackFocus.release()
         updateStringButtons()
-        tunerEngine.setPaused(false)
+        // Even interrupted output can leave an acoustic tail or queued capture buffers.
+        if (resumeDetection && listening) tunerEngine.setPaused(false, REFERENCE_SETTLE_MS)
+        else tunerEngine.setPaused(true)
         lastValidAt = 0L
+        updateKeepScreenOn()
         if (resumeDetection && listening) clearReading("参考音已停止，继续听取麦克风")
     }
 
     private fun finishReferenceTone() {
         if (!referencePlaying) return
         referencePlaying = false
-        stopToneButton.visibility = View.GONE
+        referenceSettling = true
+        playbackFocus.release()
         updateStringButtons()
-        tunerEngine.setPaused(false)
         lastValidAt = 0L
-        if (listening) clearReading("参考音已结束，继续听取麦克风")
-        else clearReading("参考音已结束")
+        signalLevel.progress = 0
+        clearReading(if (listening) "参考音已结束，等待余音消散…" else "参考音已结束")
+        updateKeepScreenOn()
+        val recovery = Runnable {
+            pendingRecovery = null
+            referenceSettling = false
+            tunerEngine.setPaused(false, CAPTURE_DRAIN_MS)
+            if (listening) clearReading("正在听，请单独拨响一根弦")
+            else clearReading("参考音已结束，点击“开始调音”即可识别")
+        }
+        pendingRecovery = recovery
+        handler.postDelayed(recovery, REFERENCE_SETTLE_MS)
+    }
+
+    private fun cancelReferenceRecovery() {
+        pendingRecovery?.let { handler.removeCallbacks(it) }
+        pendingRecovery = null
     }
 
     private fun selectedString(): GuitarString =
@@ -504,7 +604,7 @@ class MainActivity : Activity() {
             }
             button.setTextColor(if (active) Color.rgb(20, 23, 18) else textPrimary)
             button.background = rounded(if (active) primary else surface, 12, if (active) null else surfaceRaised)
-            button.contentDescription = "${number} 弦 ${string.note}${string.octave}，播放吉他参考音"
+            button.contentDescription = "${number} 弦 ${string.note}${string.octave}，试听 1 秒吉他参考音"
         }
     }
 
@@ -647,19 +747,26 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         if (listening) stopListening()
-        if (referencePlaying) stopReferenceTone(resumeDetection = false)
+        if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = false)
+        metronomePanel.stop()
+        playbackFocus.release()
         super.onStop()
     }
 
     override fun onDestroy() {
         tunerEngine.stop()
         referenceTonePlayer.release()
+        cancelReferenceRecovery()
+        metronomePanel.stop()
+        playbackFocus.release()
         super.onDestroy()
     }
 
     companion object {
         private const val REQUEST_RECORD_AUDIO = 2001
         private const val READING_HOLD_MS = 1_800L
+        private const val REFERENCE_SETTLE_MS = 400L
+        private const val CAPTURE_DRAIN_MS = 80L
     }
 }
 

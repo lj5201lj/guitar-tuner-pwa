@@ -11,6 +11,23 @@
 - 页面、算法与吉他参考音均打入 APK，运行时不访问 GitHub Pages，可完全离线使用。
 - Android 6.0 及以上可安装；首次使用需要授予麦克风权限。
 
+2.1.0 将调音器和另一个项目的节拍器合并在同一个原生 App：
+
+- 顶部切换“调音器 / 节拍器”，切页停止上一工具的录音或播放，退到后台也自动停止。
+- 点弦播放真实吉他采样，1 秒后自动渐弱结束，无需手动停止。
+- 参考音播放时保留麦克风连接但暂停分析；结束后等待 400 ms 余音、80 ms 采样排空，再重置滤波、YIN 窗口与平滑历史。旧 UI 更新以代次标识作废。
+- 节拍器复用独立节拍器项目的 `BeatClock` / `MetronomeEngine` 音频采样帧调度，支持 30–300 BPM、点按测速、2/4、3/4、4/4、6/8（3+3）、清脆/木鱼/电子音色和音量。设置保存于本机。
+- 6/8 的 BPM 按附点四分音符计，第 1、4 个八分音符提示音加重音。
+- 包名、签名和自定义调弦存储沿用 2.0.0，可覆盖安装；独立节拍器的设置不会跨应用自动导入。
+
+Android 构建使用 JDK 17、SDK 37.0、AGP 9.4.0（内置 Kotlin，编译器固定为 2.4.10）、Gradle 9.6.0，目标 SDK 仍为 36。配置 `JAVA_HOME`、`ANDROID_HOME` 和原发布密钥对应的 `ANDROID_KEYSTORE_*` 环境变量后执行：
+
+```bash
+gradle -p android-wrapper :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
+```
+
+APK 在 `android-wrapper/app/build/outputs/apk/release/app-release.apk`，GitHub Actions 同时提供已签名构建。参考音隔离采用播放期间屏蔽和恢复前清空采样，不声称对任意房间、外置扬声器或长蓝牙延迟完成声学回声消除。
+
 网页 PWA 与 Android 原生版是两个独立前端，PWA 仍保留在 `src/` 和 `public/`。
 
 ## 本地运行
