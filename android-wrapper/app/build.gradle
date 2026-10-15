@@ -10,8 +10,8 @@ android {
         applicationId 'io.github.lj5201lj.xianzhun'
         minSdk 23
         targetSdk 36
-        versionCode 3
-        versionName '2.1.0'
+        versionCode 4
+        versionName '2.2.0'
     }
 
     signingConfigs {
@@ -28,6 +28,13 @@ android {
         release {
             minifyEnabled false
             signingConfig signingConfigs.release
+        }
+    }
+
+    // Both small translations must stay available offline, including future store AAB installs.
+    bundle {
+        language {
+            enableSplit = false
         }
     }
 

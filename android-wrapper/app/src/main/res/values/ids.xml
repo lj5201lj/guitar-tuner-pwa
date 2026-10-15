@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="language_button" type="id" />
+    <item name="tab_tuner" type="id" />
+    <item name="tab_metronome" type="id" />
+    <item name="tuning_toggle" type="id" />
+</resources>

@@ -30,6 +30,17 @@ APK 在 `android-wrapper/app/build/outputs/apk/release/app-release.apk`，GitHub
 
 网页 PWA 与 Android 原生版是两个独立前端，PWA 仍保留在 `src/` 和 `public/`。
 
+## Android 2.2.0：语言选择
+
+- 点击顶部“文/A”，选择“跟随系统 / 简体中文 / English”；选择保存于本机。
+- 调音、节拍器、参考音、权限提示、自定义调弦与无障碍名称使用统一的 Android 字符串资源。未提供翻译的系统语言回退到英语。
+- Android 13+ 使用 `LocaleManager`，支持系统“应用语言”入口；Android 6–12 使用配置上下文并在切换时重建 Activity。
+- 切换会停止录音和播放，保留当前工具、调弦方案和节拍器设置；不自动重开麦克风。
+- APK 与未来 AAB 都包含完整双语资源，离线可切换。
+- 同时修正深色自定义调弦面板中弦号、八度和频率的对比度。
+
+质量和上架待办见 `android-wrapper/MARKET-READINESS.md`。语言功能完成不表示应用宝已审核通过；真实手机拨弦、隐私页面和发布主体材料仍需单独验收。
+
 ## 本地运行
 
 ```bash

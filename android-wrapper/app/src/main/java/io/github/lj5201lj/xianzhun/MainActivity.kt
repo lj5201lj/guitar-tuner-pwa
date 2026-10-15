@@ -77,6 +77,10 @@ class MainActivity : Activity() {
     private lateinit var tunerEngine: TunerEngine
     private lateinit var referenceTonePlayer: ReferenceTonePlayer
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(16, 18, 15)
@@ -104,7 +108,8 @@ class MainActivity : Activity() {
         refreshPresetSpinner()
         updateModeUi()
         updateStringButtons()
-        clearReading("点击“开始调音”，然后逐根拨弦")
+        clearReading(getString(R.string.tuner_initial_hint))
+        if (savedInstanceState?.getBoolean("tuner_page_selected", true) == false) selectPage(tuner = false)
     }
 
     private fun buildInterface(): View {
@@ -125,17 +130,32 @@ class MainActivity : Activity() {
         }
         val tabs = LinearLayout(this).apply { setPadding(dp(18), dp(8), dp(18), dp(6)) }
         tunerTab = Button(this).apply {
-            text = "调音器"
+            id = R.id.tab_tuner
+            setText(R.string.tuner)
+            textSize = 14f
             isAllCaps = false
             setOnClickListener { selectPage(tuner = true) }
         }
         metronomeTab = Button(this).apply {
-            text = "节拍器"
+            id = R.id.tab_metronome
+            setText(R.string.metronome)
+            textSize = 14f
             isAllCaps = false
             setOnClickListener { selectPage(tuner = false) }
         }
-        tabs.addView(tunerTab, LinearLayout.LayoutParams(0, dp(46), 1f))
-        tabs.addView(metronomeTab, marginParams(width = 0, height = 46, weight = 1f, left = 8))
+        tabs.addView(tunerTab, LinearLayout.LayoutParams(0, dp(48), 1f))
+        tabs.addView(metronomeTab, marginParams(width = 0, height = 48, weight = 1f, left = 8))
+        tabs.addView(Button(this).apply {
+            id = R.id.language_button
+            text = "文/A"
+            isAllCaps = false
+            textSize = 14f
+            setPadding(0, 0, 0, 0)
+            contentDescription = getString(R.string.language_settings)
+            setTextColor(gold)
+            background = rounded(surface, 13)
+            setOnClickListener { showLanguagePicker() }
+        }, marginParams(width = 52, height = 48, left = 8))
         shell.addView(tabs)
         val pages = FrameLayout(this)
         tunerPage = buildTunerInterface()
@@ -156,6 +176,38 @@ class MainActivity : Activity() {
         styleTab(tunerTab, true)
         styleTab(metronomeTab, false)
         return shell
+    }
+
+    private fun showLanguagePicker() {
+        val current = AppLanguage.selected(this)
+        val choices = LanguageChoice.entries
+        val labels = arrayOf(getString(R.string.language_system),
+            getString(R.string.language_chinese), getString(R.string.language_english))
+        val heading = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(20), dp(24), dp(10))
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.language_settings)
+                textSize = 20f
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.language_change_note)
+                textSize = 13f
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+        AlertDialog.Builder(this).setCustomTitle(heading)
+            .setSingleChoiceItems(labels, choices.indexOf(current)) { dialog, position ->
+                dialog.dismiss()
+                val next = choices[position]
+                if (next == current) return@setSingleChoiceItems
+                if (listening) stopListening()
+                if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = false)
+                metronomePanel.stop()
+                if (AppLanguage.select(this, next)) recreate()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun selectPage(tuner: Boolean) {
@@ -218,12 +270,12 @@ class MainActivity : Activity() {
                 preferences.edit().putString("active_tuning", preset.id).apply()
                 updateStringButtons()
                 if (wasPlaying) playReferenceTone(selectedString())
-                if (!listening && !referencePlaying) clearReading("已选择 ${preset.name}")
+                if (!listening && !referencePlaying) clearReading(getString(R.string.selected_tuning, preset.localizedName(this@MainActivity)))
             }
         }
         tuningRow.addView(presetSpinner, LinearLayout.LayoutParams(0, dp(48), 1f))
         tuningRow.addView(Button(this).apply {
-            text = "编辑自定义"
+            setText(R.string.edit_custom)
             isAllCaps = false
             setTextColor(gold)
             textSize = 13f
@@ -236,23 +288,23 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
         }
         autoButton = Button(this).apply {
-            text = "自动识别"
+            setText(R.string.auto_mode)
             isAllCaps = false
             setOnClickListener {
                 autoMode = true
                 preferences.edit().putBoolean("auto_mode", true).apply()
                 updateModeUi()
-                if (!listening) clearReading("自动模式会判断最接近的琴弦")
+                if (!listening) clearReading(getString(R.string.auto_mode_hint))
             }
         }
         manualButton = Button(this).apply {
-            text = "手动选弦"
+            setText(R.string.manual_mode)
             isAllCaps = false
             setOnClickListener {
                 autoMode = false
                 preferences.edit().putBoolean("auto_mode", false).apply()
                 updateModeUi()
-                if (!listening) clearReading("手动模式：当前 ${selectedString().displayName()}")
+                if (!listening) clearReading(getString(R.string.manual_mode_hint, selectedString().displayName()))
             }
         }
         modeRow.addView(autoButton, LinearLayout.LayoutParams(0, dp(46), 1f))
@@ -320,7 +372,7 @@ class MainActivity : Activity() {
         }
         readingCard.addView(signalLevel, marginParams(width = -1, height = 8, top = 10, left = 10, right = 10))
         engineInfoText = TextView(this).apply {
-            text = "等待启动原生麦克风"
+            setText(R.string.microphone_waiting)
             setTextColor(textMuted)
             textSize = 11f
             gravity = Gravity.CENTER
@@ -330,7 +382,8 @@ class MainActivity : Activity() {
         root.addView(readingCard, marginParams(top = 12))
 
         microphoneButton = Button(this).apply {
-            text = "开始调音"
+            id = R.id.tuning_toggle
+            setText(R.string.start_tuning)
             isAllCaps = false
             textSize = 17f
             typeface = Typeface.DEFAULT_BOLD
@@ -343,7 +396,7 @@ class MainActivity : Activity() {
         transport.addView(microphoneButton, marginParams(width = -1, height = 50))
 
         transport.addView(TextView(this).apply {
-            text = "点选琴弦试听 1 秒参考音，结束后自动恢复识别"
+            setText(R.string.reference_hint)
             setTextColor(textMuted)
             textSize = 12f
             gravity = Gravity.CENTER
@@ -397,13 +450,13 @@ class MainActivity : Activity() {
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             startListening()
         } else {
-            clearReading("没有麦克风权限，无法识别琴弦")
+            clearReading(getString(R.string.permission_missing))
             statusText.setTextColor(errorColor)
             if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
                 AlertDialog.Builder(this)
-                    .setTitle("需要麦克风权限")
-                    .setMessage("请到系统设置 → 应用 → 弦准 → 权限，允许使用麦克风。")
-                    .setPositiveButton("知道了", null)
+                    .setTitle(R.string.permission_title)
+                    .setMessage(getString(R.string.permission_settings_hint, getString(R.string.app_name)))
+                    .setPositiveButton(R.string.got_it, null)
                     .show()
             }
         }
@@ -412,22 +465,22 @@ class MainActivity : Activity() {
     private fun startListening() {
         if (!tunerPageSelected) return
         statusText.setTextColor(textMuted)
-        statusText.text = "正在启动麦克风…"
+        statusText.setText(R.string.microphone_starting)
         val result = tunerEngine.start()
         if (result.isSuccess) {
             listening = true
             lastValidAt = 0L
-            microphoneButton.text = "停止调音"
+            microphoneButton.setText(R.string.stop_tuning)
             microphoneButton.setTextColor(textPrimary)
             microphoneButton.background = rounded(surfaceRaised, 15, gold)
             engineInfoText.text = result.getOrNull()
             if (referencePlaying || referenceSettling) {
                 tunerEngine.setPaused(true)
-                statusText.text = "参考音结束后自动开始识别"
-            } else statusText.text = "正在听，请单独拨响一根弦"
+                statusText.setText(R.string.resume_after_reference)
+            } else statusText.setText(R.string.listening_hint)
             updateKeepScreenOn()
         } else {
-            showEngineError(result.exceptionOrNull()?.message ?: "无法启动麦克风")
+            showEngineError(result.exceptionOrNull()?.message ?: getString(R.string.microphone_start_failed))
         }
     }
 
@@ -436,21 +489,21 @@ class MainActivity : Activity() {
         listening = false
         lastValidAt = 0L
         signalLevel.progress = 0
-        microphoneButton.text = "开始调音"
+        microphoneButton.setText(R.string.start_tuning)
         microphoneButton.setTextColor(Color.rgb(20, 23, 18))
         microphoneButton.background = rounded(primary, 15)
-        engineInfoText.text = "麦克风已停止"
+        engineInfoText.setText(R.string.microphone_stopped)
         updateKeepScreenOn()
-        clearReading("麦克风已停止")
+        clearReading(getString(R.string.microphone_stopped))
     }
 
     private fun showEngineError(message: String) {
         tunerEngine.stop()
         listening = false
-        microphoneButton.text = "重试调音"
+        microphoneButton.setText(R.string.retry_tuning)
         microphoneButton.setTextColor(Color.rgb(20, 23, 18))
         microphoneButton.background = rounded(primary, 15)
-        engineInfoText.text = "录音启动失败"
+        engineInfoText.setText(R.string.recording_start_failed)
         clearReading(message)
         statusText.setTextColor(errorColor)
         updateKeepScreenOn()
@@ -462,11 +515,7 @@ class MainActivity : Activity() {
         val frequency = update.frequency
         if (frequency == null) {
             if (SystemClock.elapsedRealtime() - lastValidAt < READING_HOLD_MS) return
-            clearReading(if (update.hasSignal) {
-                "已收到声音，正在稳定音高…"
-            } else {
-                "输入较轻，请靠近麦克风并单独拨一根弦"
-            })
+            clearReading(getString(if (update.hasSignal) R.string.pitch_stabilizing else R.string.input_too_quiet))
             return
         }
 
@@ -480,15 +529,15 @@ class MainActivity : Activity() {
         val accurate = abs(cents) <= 5.0
         noteText.text = target.note
         octaveText.text = target.octave.toString()
-        frequencyText.text = String.format(Locale.US, "%.2f Hz  ·  目标 %.2f Hz", frequency, target.frequency)
+        frequencyText.text = getString(R.string.frequency_and_target, frequency, target.frequency)
         centsText.text = String.format(Locale.US, "%+.1f cents", cents)
         centsText.setTextColor(if (accurate) primary else textPrimary)
         statusText.setTextColor(if (accurate) primary else textMuted)
-        statusText.text = when {
-            accurate -> "准确"
-            cents < 0 -> "偏低 · 请稍微拧紧琴弦"
-            else -> "偏高 · 请稍微放松琴弦"
-        }
+        statusText.setText(when {
+            accurate -> R.string.in_tune
+            cents < 0 -> R.string.pitch_flat
+            else -> R.string.pitch_sharp
+        })
         meter.setReading(cents, active = true, isAccurate = accurate)
 
         if (autoMode && selectedStringNumber != target.number) {
@@ -512,7 +561,7 @@ class MainActivity : Activity() {
     private fun playReferenceTone(string: GuitarString) {
         if (!tunerPageSelected) return
         if (!playbackFocus.acquire()) {
-            Toast.makeText(this, "暂时无法播放参考音，请稍后重试", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.reference_unavailable, Toast.LENGTH_SHORT).show()
             return
         }
         cancelReferenceRecovery()
@@ -524,15 +573,15 @@ class MainActivity : Activity() {
         lastValidAt = 0L
         updateKeepScreenOn()
         updateStringButtons()
-        clearReading("参考音 ${string.displayName()} · 1 秒后自动结束")
+        clearReading(getString(R.string.reference_playing, string.displayName()))
         noteText.text = string.note
         octaveText.text = string.octave.toString()
-        frequencyText.text = String.format(Locale.US, "参考音 %.2f Hz", string.frequency)
+        frequencyText.text = getString(R.string.reference_frequency, string.frequency)
         referenceTonePlayer.play(string) {
             runOnUiThread { finishReferenceTone() }
         }.onFailure {
             finishReferenceTone()
-            Toast.makeText(this, it.message ?: "参考音播放失败", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, it.message ?: getString(R.string.reference_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -548,7 +597,7 @@ class MainActivity : Activity() {
         else tunerEngine.setPaused(true)
         lastValidAt = 0L
         updateKeepScreenOn()
-        if (resumeDetection && listening) clearReading("参考音已停止，继续听取麦克风")
+        if (resumeDetection && listening) clearReading(getString(R.string.reference_stopped_listening))
     }
 
     private fun finishReferenceTone() {
@@ -559,14 +608,14 @@ class MainActivity : Activity() {
         updateStringButtons()
         lastValidAt = 0L
         signalLevel.progress = 0
-        clearReading(if (listening) "参考音已结束，等待余音消散…" else "参考音已结束")
+        clearReading(getString(if (listening) R.string.reference_settling else R.string.reference_ended))
         updateKeepScreenOn()
         val recovery = Runnable {
             pendingRecovery = null
             referenceSettling = false
             tunerEngine.setPaused(false, CAPTURE_DRAIN_MS)
-            if (listening) clearReading("正在听，请单独拨响一根弦")
-            else clearReading("参考音已结束，点击“开始调音”即可识别")
+            if (listening) clearReading(getString(R.string.listening_hint))
+            else clearReading(getString(R.string.reference_ended_start_hint))
         }
         pendingRecovery = recovery
         handler.postDelayed(recovery, REFERENCE_SETTLE_MS)
@@ -580,7 +629,7 @@ class MainActivity : Activity() {
     private fun selectedString(): GuitarString =
         activePreset.strings.first { it.number == selectedStringNumber }
 
-    private fun GuitarString.displayName(): String = "$note$octave（$number 弦）"
+    private fun GuitarString.displayName(): String = getString(R.string.string_note_name, note, octave, number)
 
     private fun updateModeUi() {
         fun style(button: Button, active: Boolean) {
@@ -604,7 +653,7 @@ class MainActivity : Activity() {
             }
             button.setTextColor(if (active) Color.rgb(20, 23, 18) else textPrimary)
             button.background = rounded(if (active) primary else surface, 12, if (active) null else surfaceRaised)
-            button.contentDescription = "${number} 弦 ${string.note}${string.octave}，试听 1 秒吉他参考音"
+            button.contentDescription = getString(R.string.string_reference_accessibility, number, string.note, string.octave)
         }
     }
 
@@ -614,7 +663,7 @@ class MainActivity : Activity() {
         val adapter = object : ArrayAdapter<String>(
             this,
             android.R.layout.simple_spinner_dropdown_item,
-            allPresets().map { it.name },
+            allPresets().map { it.localizedName(this) },
         ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 return (super.getView(position, convertView, parent) as TextView).apply {
@@ -645,32 +694,24 @@ class MainActivity : Activity() {
                 setPadding(0, dp(4), 0, dp(4))
             }
             row.addView(TextView(this).apply {
-                text = "$number 弦"
-                setTextColor(Color.DKGRAY)
+                text = getString(R.string.string_number, number)
+                setTextColor(textPrimary)
                 textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
             }, LinearLayout.LayoutParams(dp(48), dp(48)))
 
             val noteSpinner = Spinner(this)
-            noteSpinner.adapter = ArrayAdapter(
-                this,
-                android.R.layout.simple_spinner_dropdown_item,
-                TuningMath.noteChoices.map { it.label },
-            )
+            noteSpinner.adapter = customOptionsAdapter(TuningMath.noteChoices.map { it.label })
             noteSpinner.setSelection(TuningMath.noteChoices.indexOfFirst { it.label == current.note }.coerceAtLeast(0))
             row.addView(noteSpinner, LinearLayout.LayoutParams(0, dp(48), 1f))
 
             val octaveSpinner = Spinner(this)
-            octaveSpinner.adapter = ArrayAdapter(
-                this,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf(1, 2, 3, 4, 5),
-            )
+            octaveSpinner.adapter = customOptionsAdapter(listOf(1, 2, 3, 4, 5))
             octaveSpinner.setSelection((current.octave - 1).coerceIn(0, 4))
             row.addView(octaveSpinner, LinearLayout.LayoutParams(dp(64), dp(48)))
 
             val frequency = TextView(this).apply {
-                setTextColor(Color.DKGRAY)
+                setTextColor(textPrimary)
                 textSize = 12f
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
                 text = String.format(Locale.US, "%.2f Hz", current.frequency)
@@ -683,7 +724,7 @@ class MainActivity : Activity() {
                 val next = GuitarString(number, note, octave)
                 drafts[number] = next
                 frequency.text = String.format(Locale.US, "%.2f Hz", next.frequency)
-                frequency.setTextColor(if (TuningMath.isCustomPitchValid(note, octave)) Color.DKGRAY else Color.RED)
+                frequency.setTextColor(if (TuningMath.isCustomPitchValid(note, octave)) textPrimary else errorColor)
             }
             noteSpinner.onItemSelectedListener = SimpleItemSelectedListener { updateDraft() }
             octaveSpinner.onItemSelectedListener = SimpleItemSelectedListener { updateDraft() }
@@ -692,22 +733,22 @@ class MainActivity : Activity() {
 
         val scroll = ScrollView(this).apply { addView(container) }
         val dialog = AlertDialog.Builder(this)
-            .setTitle("自定义调弦（B1–E5）")
+            .setTitle(R.string.custom_tuning_title)
             .setView(scroll)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("保存并使用", null)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.save_and_use, null)
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val strings = (6 downTo 1).map { requireNotNull(drafts[it]) }
                 if (!strings.all { TuningMath.isCustomPitchValid(it.note, it.octave) }) {
-                    Toast.makeText(this, "每根弦必须在 B1 到 E5 之间", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, R.string.custom_range_error, Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
                 val wasPlaying = referencePlaying
                 if (wasPlaying) stopReferenceTone(resumeDetection = false)
                 Tunings.saveCustom(preferences, strings)
-                customPreset = TuningPreset("custom", "自定义", strings)
+                customPreset = TuningPreset("custom", "Custom", strings)
                 activePreset = customPreset
                 preferences.edit().putString("active_tuning", "custom").apply()
                 refreshPresetSpinner()
@@ -718,6 +759,20 @@ class MainActivity : Activity() {
         }
         dialog.show()
     }
+
+    private fun <T> customOptionsAdapter(options: List<T>): ArrayAdapter<T> =
+        object : ArrayAdapter<T>(this, android.R.layout.simple_spinner_dropdown_item, options) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                (super.getView(position, convertView, parent) as TextView).apply {
+                    setTextColor(textPrimary)
+                    // The system dropdown layout has wide padding; it hides the selected octave
+                    // inside a compact Spinner even though accessibility still reports the value.
+                    setPadding(0, 0, 0, 0)
+                }
+
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
+                (super.getDropDownView(position, convertView, parent) as TextView).apply { setTextColor(textPrimary) }
+        }
 
     private fun rounded(fillColor: Int, radiusDp: Int, strokeColor: Int? = null): GradientDrawable =
         GradientDrawable().apply {
@@ -744,6 +799,11 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("tuner_page_selected", tunerPageSelected)
+        super.onSaveInstanceState(outState)
+    }
 
     override fun onStop() {
         if (listening) stopListening()

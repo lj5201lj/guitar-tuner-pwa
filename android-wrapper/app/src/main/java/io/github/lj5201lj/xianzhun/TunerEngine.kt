@@ -77,9 +77,9 @@ class TunerEngine(
         val supportsUnprocessed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
             audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
         val sources = buildList {
-            if (supportsUnprocessed) add(MediaRecorder.AudioSource.UNPROCESSED to "未经处理的麦克风")
-            add(MediaRecorder.AudioSource.VOICE_RECOGNITION to "低处理麦克风")
-            add(MediaRecorder.AudioSource.MIC to "标准麦克风")
+            if (supportsUnprocessed) add(MediaRecorder.AudioSource.UNPROCESSED to context.getString(R.string.source_unprocessed))
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION to context.getString(R.string.source_voice_recognition))
+            add(MediaRecorder.AudioSource.MIC to context.getString(R.string.source_standard))
         }
         val rates = intArrayOf(48_000, 44_100, 22_050, 16_000)
 
@@ -116,7 +116,7 @@ class TunerEngine(
                 record.release()
             }
         }
-        error("系统未能启动录音，请关闭其他录音应用后重试。")
+        error(context.getString(R.string.recording_unavailable))
     }
 
     private fun captureLoop(session: Session, sampleRate: Int) {
@@ -162,7 +162,7 @@ class TunerEngine(
             while (session.active.get()) {
                 val beforeRead = analysisGate.token(SystemClock.elapsedRealtime())
                 val count = record.read(shorts, 0, shorts.size, AudioRecord.READ_BLOCKING)
-                if (count < 0) error("麦克风读取失败（$count）。")
+                if (count < 0) error(context.getString(R.string.microphone_read_failed, count))
                 if (count == 0) continue
 
                 val generation = analysisGate.token(SystemClock.elapsedRealtime())
@@ -251,7 +251,7 @@ class TunerEngine(
             }
         } catch (error: Throwable) {
             if (session.active.get() && currentSession === session) {
-                onError(error.message ?: "麦克风读取发生错误。")
+                onError(error.message ?: context.getString(R.string.microphone_read_error))
             }
         } finally {
             session.active.set(false)

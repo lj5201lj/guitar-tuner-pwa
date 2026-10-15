@@ -63,7 +63,7 @@ object Tunings {
     }
 
     val standard = preset(
-        "standard", "标准调弦",
+        "standard", "Standard",
         listOf("E" to 2, "A" to 2, "D" to 3, "G" to 3, "B" to 3, "E" to 4),
     )
 
@@ -74,7 +74,7 @@ object Tunings {
             listOf("D" to 2, "A" to 2, "D" to 3, "G" to 3, "B" to 3, "E" to 4),
         ),
         preset(
-            "d-standard", "D 标准",
+            "d-standard", "D Standard",
             listOf("D" to 2, "G" to 2, "C" to 3, "F" to 3, "A" to 3, "D" to 4),
         ),
         preset(
@@ -98,7 +98,7 @@ object Tunings {
                 base
             }
         }
-        return TuningPreset("custom", "自定义", strings)
+        return TuningPreset("custom", "Custom", strings)
     }
 
     fun saveCustom(preferences: SharedPreferences, strings: List<GuitarString>) {

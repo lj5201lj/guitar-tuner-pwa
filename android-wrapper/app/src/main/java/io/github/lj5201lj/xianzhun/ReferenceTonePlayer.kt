@@ -36,7 +36,7 @@ class ReferenceTonePlayer(private val context: Context) {
         completion = onFinished
         val sample = samples.minBy { abs(1200.0 * kotlin.math.log2(string.frequency / it.frequency)) }
         val next = requireNotNull(MediaPlayer.create(context, sample.resource)) {
-            "无法载入吉他参考音。"
+            context.getString(R.string.reference_load_failed)
         }
         player = next
         next.setVolume(0.92f, 0.92f)

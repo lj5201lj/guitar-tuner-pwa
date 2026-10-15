@@ -20,7 +20,7 @@ enum class Meter(val label: String, val pulses: Int, val subdivisionsPerTempoBea
 }
 
 enum class ClickSound(val label: String) {
-    CLICK("清脆"), WOOD("木鱼"), BEEP("电子")
+    CLICK("Click"), WOOD("Woodblock"), BEEP("Beep")
 }
 
 data class PlaybackSettings(

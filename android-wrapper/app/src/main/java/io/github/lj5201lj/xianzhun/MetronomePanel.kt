@@ -39,25 +39,25 @@ class MetronomePanel(
     private val beatLights = mutableListOf<TextView>()
     private val bpmText = label("", 64f, true)
     private val tempoCaption = label("", 12f)
-    private val message = label("点击开始，跟着节拍练习", 13f)
+    private val message = label(context.getString(R.string.metronome_initial_hint), 13f)
     private val beatRow = LinearLayout(context).apply { gravity = Gravity.CENTER }
     private val bpmSlider = SeekBar(context).apply {
         max = 270
         progress = settings.bpm - 30
-        contentDescription = "速度，30 到 300 BPM"
+        contentDescription = context.getString(R.string.tempo_accessibility)
     }
-    private val startButton = button("开始节拍", emphasized = true)
+    private val startButton = button(context.getString(R.string.start_metronome), emphasized = true)
     private val engine = MetronomeEngine(
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager,
         onBeatHeard = { mark ->
             if (playing && mark.settings.meter == settings.meter) {
                 renderBeat(mark.pulse)
-                message.text = "第 ${mark.pulse + 1} 拍 / ${settings.meter.pulses}"
+                message.text = context.getString(R.string.beat_position, mark.pulse + 1, settings.meter.pulses)
             }
         },
         onPlaybackError = {
             stop()
-            message.text = "音频输出不可用，请重试"
+            message.setText(R.string.audio_output_error)
         },
     )
 
@@ -71,8 +71,8 @@ class MetronomePanel(
         scroll.addView(content)
         addView(scroll, LayoutParams(-1, 0, 1f))
 
-        content.addView(label("节拍器", 30f, true))
-        content.addView(label("稳定节奏，逐拍练习", 13f), params(top = 4, bottom = 18))
+        content.addView(label(context.getString(R.string.metronome), 30f, true))
+        content.addView(label(context.getString(R.string.metronome_subtitle), 13f), params(top = 4, bottom = 18))
 
         val card = LinearLayout(context).apply {
             orientation = VERTICAL
@@ -90,19 +90,19 @@ class MetronomePanel(
         val adjustRow = LinearLayout(context)
         listOf("−5" to -5, "−1" to -1, "+1" to 1, "+5" to 5).forEachIndexed { index, (title, amount) ->
             adjustRow.addView(button(title).apply {
-                contentDescription = if (amount < 0) "速度降低 ${-amount} BPM" else "速度增加 $amount BPM"
+                contentDescription = context.getString(if (amount < 0) R.string.tempo_decrease else R.string.tempo_increase, kotlin.math.abs(amount))
                 setOnClickListener { setBpm(settings.bpm + amount) }
             }, LayoutParams(0, dp(48), 1f).apply { if (index > 0) leftMargin = dp(6) })
         }
         content.addView(adjustRow)
-        content.addView(button("点按测速").apply {
+        content.addView(button(context.getString(R.string.tap_tempo)).apply {
             setOnClickListener {
                 val bpm = tapTempo.tap(SystemClock.elapsedRealtime())
-                if (bpm != null) setBpm(bpm) else message.text = "继续按节奏点击测速"
+                if (bpm != null) setBpm(bpm) else message.setText(R.string.tap_tempo_hint)
             }
         }, params(height = 48, top = 10))
 
-        content.addView(label("拍号", 14f, true), params(top = 22, bottom = 8))
+        content.addView(label(context.getString(R.string.time_signature), 14f, true), params(top = 22, bottom = 8))
         content.addView(spinner(Meter.entries.map { it.label }, settings.meter.ordinal) { index ->
             val meter = Meter.entries[index]
             if (settings.meter != meter) {
@@ -111,24 +111,24 @@ class MetronomePanel(
                 changed()
             }
         }, params(height = 48))
-        content.addView(label("音色", 14f, true), params(top = 16, bottom = 8))
-        content.addView(spinner(ClickSound.entries.map { it.label }, settings.sound.ordinal) { index ->
+        content.addView(label(context.getString(R.string.click_sound), 14f, true), params(top = 16, bottom = 8))
+        content.addView(spinner(ClickSound.entries.map { it.localizedLabel(context) }, settings.sound.ordinal) { index ->
             settings = settings.copy(sound = ClickSound.entries[index])
             changed()
         }, params(height = 48))
-        val volumeLabel = label("音量 ${(settings.volume * 100).toInt()}%", 14f, true)
+        val volumeLabel = label(context.getString(R.string.volume_percent, (settings.volume * 100).toInt()), 14f, true)
         content.addView(volumeLabel, params(top = 16, bottom = 5))
         content.addView(SeekBar(context).apply {
             max = 100
             progress = (settings.volume * 100).toInt()
-            contentDescription = "节拍音量"
+            contentDescription = context.getString(R.string.metronome_volume)
             setOnSeekBarChangeListener(sliderListener { value ->
                 settings = settings.copy(volume = value / 100f)
-                volumeLabel.text = "音量 $value%"
+                volumeLabel.text = context.getString(R.string.volume_percent, value)
                 changed()
             })
         }, params(height = 48))
-        content.addView(label("6/8：每小节 3+3 分组，BPM 按附点四分音符计。\n切换页面或退到后台会停止播放。", 12f), params(top = 10))
+        content.addView(label(context.getString(R.string.metronome_help), 12f), params(top = 10))
 
         // The transport stays visible even when settings are scrolled on a small screen.
         val transport = LinearLayout(context).apply { setPadding(dp(18), dp(8), dp(18), dp(12)) }
@@ -137,11 +137,11 @@ class MetronomePanel(
         startButton.setOnClickListener {
             if (playing) stop() else if (beforeStart()) {
                 playing = true
-                startButton.text = "停止节拍"
-                message.text = "正在播放"
+                startButton.setText(R.string.stop_metronome)
+                message.setText(R.string.playing)
                 onPlayingChanged(true)
                 engine.start(settings)
-            } else message.text = "暂时无法播放，请稍后重试"
+            } else message.setText(R.string.playback_unavailable)
         }
         bpmSlider.setOnSeekBarChangeListener(sliderListener { setBpm(it + 30) })
         rebuildBeatLights()
@@ -152,8 +152,8 @@ class MetronomePanel(
         engine.stop()
         val wasPlaying = playing
         playing = false
-        startButton.text = "开始节拍"
-        message.text = "已停止"
+        startButton.setText(R.string.start_metronome)
+        message.setText(R.string.stopped)
         renderBeat(-1)
         if (wasPlaying) onPlayingChanged(false)
     }
@@ -175,7 +175,7 @@ class MetronomePanel(
 
     private fun renderTempo() {
         bpmText.text = settings.bpm.toString()
-        tempoCaption.text = if (settings.meter == Meter.SIX_EIGHT) "BPM · 附点四分音符" else "BPM · 四分音符"
+        tempoCaption.setText(if (settings.meter == Meter.SIX_EIGHT) R.string.tempo_dotted_quarter else R.string.tempo_quarter)
     }
 
     private fun rebuildBeatLights() {
@@ -184,7 +184,8 @@ class MetronomePanel(
         repeat(settings.meter.pulses) { pulse ->
             val light = label((pulse + 1).toString(), 20f, true).apply {
                 gravity = Gravity.CENTER
-                contentDescription = "第 ${pulse + 1} 拍，${if (settings.meter.accentAt(pulse) != Accent.NORMAL) "重音" else "普通拍"}"
+                contentDescription = context.getString(R.string.beat_accessibility, pulse + 1,
+                    context.getString(if (settings.meter.accentAt(pulse) != Accent.NORMAL) R.string.accent_strong else R.string.accent_normal))
             }
             beatLights.add(light)
             beatRow.addView(light, LayoutParams(0, -1, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
