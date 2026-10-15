@@ -4,7 +4,10 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -15,6 +18,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.media.AudioManager
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -44,6 +48,7 @@ class MainActivity : Activity() {
     private lateinit var noteText: TextView
     private lateinit var octaveText: TextView
     private lateinit var frequencyText: TextView
+    private lateinit var targetText: TextView
     private lateinit var centsText: TextView
     private lateinit var statusText: TextView
     private lateinit var microphoneButton: Button
@@ -63,6 +68,7 @@ class MainActivity : Activity() {
     private var listening = false
     private var referencePlaying = false
     private var referenceSettling = false
+    private var referenceQuietUntil = 0L
     private val handler = Handler(Looper.getMainLooper())
     private var pendingRecovery: Runnable? = null
     private var tunerPageSelected = true
@@ -72,6 +78,14 @@ class MainActivity : Activity() {
     private lateinit var metronomeTab: Button
     private lateinit var playbackFocus: PlaybackFocus
     private var lastValidAt = 0L
+    private var lastCents = 0.0
+    private val inTuneConfirmation = InTuneConfirmation()
+    private var pendingMicrophoneCheck = false
+    private var microphoneCheck: MicrophoneCheck? = null
+    private var microphoneCheckDialog: AlertDialog? = null
+    private var microphoneCheckOwnsInput = false
+    private var microphoneCheckEndsAt = 0L
+    private var microphoneCheckTicker: Runnable? = null
     private var changingPresetProgrammatically = false
 
     private lateinit var tunerEngine: TunerEngine
@@ -133,6 +147,7 @@ class MainActivity : Activity() {
             id = R.id.tab_tuner
             setText(R.string.tuner)
             textSize = 14f
+            setPadding(dp(4), 0, dp(4), 0)
             isAllCaps = false
             setOnClickListener { selectPage(tuner = true) }
         }
@@ -140,6 +155,7 @@ class MainActivity : Activity() {
             id = R.id.tab_metronome
             setText(R.string.metronome)
             textSize = 14f
+            setPadding(dp(4), 0, dp(4), 0)
             isAllCaps = false
             setOnClickListener { selectPage(tuner = false) }
         }
@@ -156,6 +172,16 @@ class MainActivity : Activity() {
             background = rounded(surface, 13)
             setOnClickListener { showLanguagePicker() }
         }, marginParams(width = 52, height = 48, left = 8))
+        tabs.addView(Button(this).apply {
+            id = R.id.more_button
+            text = "⋮"
+            textSize = 25f
+            setPadding(0, 0, 0, 0)
+            contentDescription = getString(R.string.more_tools)
+            setTextColor(gold)
+            background = rounded(surface, 13)
+            setOnClickListener { showToolsMenu() }
+        }, marginParams(width = 44, height = 48, left = 6))
         shell.addView(tabs)
         val pages = FrameLayout(this)
         tunerPage = buildTunerInterface()
@@ -176,6 +202,34 @@ class MainActivity : Activity() {
         styleTab(tunerTab, true)
         styleTab(metronomeTab, false)
         return shell
+    }
+
+    private fun showToolsMenu() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle(R.string.more_tools).setView(content)
+            .setNegativeButton(R.string.cancel, null).create()
+        fun item(label: Int, resourceId: Int, action: () -> Unit) {
+            content.addView(Button(this).apply {
+                id = resourceId
+                setText(label)
+                isAllCaps = false
+                setOnClickListener { dialog.dismiss(); action() }
+            }, LinearLayout.LayoutParams(-1, dp(52)))
+        }
+        item(R.string.microphone_check, R.id.microphone_check) {
+            selectPage(tuner = true)
+            requestMicrophoneCheck()
+        }
+        item(R.string.about_and_privacy, R.id.about_button) {
+            if (listening) stopListening()
+            if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = false)
+            metronomePanel.stop()
+            AppInfoDialogs(this, preferences).showAbout()
+        }
+        dialog.show()
     }
 
     private fun showLanguagePicker() {
@@ -314,13 +368,14 @@ class MainActivity : Activity() {
         val readingCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(14), dp(10), dp(14), dp(8))
+            setPadding(dp(14), dp(6), dp(14), dp(4))
             background = rounded(surface, 20)
         }
         val noteRow = LinearLayout(this).apply {
             gravity = Gravity.CENTER
         }
         noteText = TextView(this).apply {
+            id = R.id.detected_note
             text = "—"
             setTextColor(textPrimary)
             textSize = 50f
@@ -335,6 +390,11 @@ class MainActivity : Activity() {
         }
         noteRow.addView(noteText)
         noteRow.addView(octaveText)
+        readingCard.addView(TextView(this).apply {
+            setText(R.string.detected_note)
+            setTextColor(textMuted)
+            textSize = 12f
+        })
         readingCard.addView(noteRow, ViewGroup.LayoutParams.MATCH_PARENT, dp(60))
 
         frequencyText = TextView(this).apply {
@@ -344,9 +404,17 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         readingCard.addView(frequencyText)
+        targetText = TextView(this).apply {
+            id = R.id.target_note
+            setTextColor(gold)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(5), 0, 0)
+        }
+        readingCard.addView(targetText)
 
         meter = TunerMeterView(this)
-        readingCard.addView(meter, ViewGroup.LayoutParams.MATCH_PARENT, dp(120))
+        readingCard.addView(meter, ViewGroup.LayoutParams.MATCH_PARENT, dp(104))
 
         centsText = TextView(this).apply {
             text = "— cents"
@@ -357,6 +425,7 @@ class MainActivity : Activity() {
         }
         readingCard.addView(centsText)
         statusText = TextView(this).apply {
+            id = R.id.tuning_status
             setTextColor(textMuted)
             textSize = 14f
             gravity = Gravity.CENTER
@@ -379,7 +448,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(5), 0, 0)
         }
         readingCard.addView(engineInfoText)
-        root.addView(readingCard, marginParams(top = 12))
+        root.addView(readingCard, marginParams(top = 8))
 
         microphoneButton = Button(this).apply {
             id = R.id.tuning_toggle
@@ -430,8 +499,109 @@ class MainActivity : Activity() {
         return panel
     }
 
+    private fun openPermissionSettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }.onFailure {
+            Toast.makeText(this, getString(R.string.permission_settings_hint, getString(R.string.app_name)), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun requestMicrophoneCheck() {
+        val hadReference = referencePlaying || referenceSettling
+        if (hadReference) stopReferenceTone(resumeDetection = true)
+        if (listening) {
+            tunerEngine.setPaused(false, if (hadReference) REFERENCE_SETTLE_MS + CAPTURE_DRAIN_MS else CAPTURE_DRAIN_MS)
+            beginMicrophoneCheck(ownsInput = false)
+        } else {
+            pendingMicrophoneCheck = true
+            requestMicrophoneAndStart()
+        }
+    }
+
+    private fun beginMicrophoneCheck(ownsInput: Boolean) {
+        pendingMicrophoneCheck = false
+        microphoneCheck = MicrophoneCheck()
+        microphoneCheckOwnsInput = ownsInput
+        microphoneCheckEndsAt = SystemClock.elapsedRealtime() + 6_000L
+        val body = TextView(this).apply {
+            id = R.id.microphone_check_status
+            textSize = 16f
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+        }
+        microphoneCheckDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.microphone_check)
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton(R.string.got_it, null)
+            .setNeutralButton(R.string.open_app_settings) { _, _ -> openPermissionSettings() }
+            .create().also { dialog ->
+                dialog.setOnDismissListener { cancelMicrophoneCheck() }
+                dialog.show()
+            }
+        val ticker = object : Runnable {
+            override fun run() {
+                val check = microphoneCheck ?: return
+                val remaining = microphoneCheckEndsAt - SystemClock.elapsedRealtime()
+                if (remaining <= 0) {
+                    microphoneCheck = null
+                    microphoneCheckTicker = null
+                    if (microphoneCheckOwnsInput && listening) stopListening()
+                    microphoneCheckOwnsInput = false
+                    body.text = getString(R.string.microphone_check_body, getString(R.string.microphone_check_complete), microphoneResultText(check.result()))
+                } else {
+                    body.text = getString(R.string.microphone_check_body,
+                        getString(R.string.microphone_check_progress, (remaining + 999) / 1000, check.frames),
+                        getString(R.string.microphone_check_instructions))
+                    handler.postDelayed(this, 250L)
+                }
+            }
+        }
+        microphoneCheckTicker = ticker
+        handler.post(ticker)
+    }
+
+    private fun microphoneResultText(result: MicrophoneResult): String = getString(when (result) {
+        MicrophoneResult.NO_DATA -> R.string.microphone_check_no_data
+        MicrophoneResult.SYSTEM_MUTED -> R.string.microphone_system_muted
+        MicrophoneResult.CLIPPING -> R.string.microphone_clipping
+        MicrophoneResult.NO_SIGNAL -> R.string.microphone_no_signal
+        MicrophoneResult.TOO_QUIET -> R.string.input_too_quiet
+        MicrophoneResult.SOUND_ONLY -> R.string.microphone_check_sound_only
+        MicrophoneResult.PITCH_OK -> R.string.microphone_check_pitch_ok
+    })
+
+    private fun cancelMicrophoneCheck() {
+        microphoneCheckTicker?.let { handler.removeCallbacks(it) }
+        microphoneCheckTicker = null
+        microphoneCheck = null
+        val owned = microphoneCheckOwnsInput
+        microphoneCheckOwnsInput = false
+        val dialog = microphoneCheckDialog
+        microphoneCheckDialog = null
+        dialog?.setOnDismissListener(null)
+        dialog?.dismiss()
+        if (owned && listening) stopListening()
+    }
+
     private fun requestMicrophoneAndStart() {
         if (!tunerPageSelected) return
+        if (!preferences.getBoolean("microphone_notice_v1", false)) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.microphone_purpose_title)
+                .setMessage(R.string.microphone_purpose)
+                .setPositiveButton(R.string.continue_to_microphone) { _, _ ->
+                    preferences.edit().putBoolean("microphone_notice_v1", true).apply()
+                    requestMicrophoneAndStart()
+                }
+                .setNeutralButton(R.string.privacy_policy) { _, _ ->
+                    pendingMicrophoneCheck = false
+                    AppInfoDialogs(this, preferences).showPrivacy()
+                }
+                .setNegativeButton(R.string.not_now) { _, _ -> pendingMicrophoneCheck = false }
+                .setOnCancelListener { pendingMicrophoneCheck = false }
+                .show()
+            return
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startListening()
         } else {
@@ -450,13 +620,15 @@ class MainActivity : Activity() {
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             startListening()
         } else {
+            pendingMicrophoneCheck = false
             clearReading(getString(R.string.permission_missing))
             statusText.setTextColor(errorColor)
             if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
                 AlertDialog.Builder(this)
                     .setTitle(R.string.permission_title)
                     .setMessage(getString(R.string.permission_settings_hint, getString(R.string.app_name)))
-                    .setPositiveButton(R.string.got_it, null)
+                    .setPositiveButton(R.string.open_app_settings) { _, _ -> openPermissionSettings() }
+                    .setNegativeButton(R.string.cancel, null)
                     .show()
             }
         }
@@ -470,6 +642,7 @@ class MainActivity : Activity() {
         if (result.isSuccess) {
             listening = true
             lastValidAt = 0L
+            inTuneConfirmation.reset()
             microphoneButton.setText(R.string.stop_tuning)
             microphoneButton.setTextColor(textPrimary)
             microphoneButton.background = rounded(surfaceRaised, 15, gold)
@@ -477,9 +650,15 @@ class MainActivity : Activity() {
             if (referencePlaying || referenceSettling) {
                 tunerEngine.setPaused(true)
                 statusText.setText(R.string.resume_after_reference)
-            } else statusText.setText(R.string.listening_hint)
+            } else {
+                val quietMs = (referenceQuietUntil - SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                if (quietMs > 0) tunerEngine.setPaused(false, quietMs)
+                statusText.setText(if (quietMs > 0) R.string.reference_settling else R.string.listening_hint)
+            }
             updateKeepScreenOn()
+            if (pendingMicrophoneCheck) beginMicrophoneCheck(ownsInput = true)
         } else {
+            pendingMicrophoneCheck = false
             showEngineError(result.exceptionOrNull()?.message ?: getString(R.string.microphone_start_failed))
         }
     }
@@ -488,6 +667,7 @@ class MainActivity : Activity() {
         tunerEngine.stop()
         listening = false
         lastValidAt = 0L
+        inTuneConfirmation.reset()
         signalLevel.progress = 0
         microphoneButton.setText(R.string.start_tuning)
         microphoneButton.setTextColor(Color.rgb(20, 23, 18))
@@ -507,15 +687,36 @@ class MainActivity : Activity() {
         clearReading(message)
         statusText.setTextColor(errorColor)
         updateKeepScreenOn()
+        AlertDialog.Builder(this).setTitle(R.string.recording_start_failed)
+            .setMessage(message + "\n\n" + getString(R.string.recording_recovery))
+            .setPositiveButton(R.string.open_app_settings) { _, _ -> openPermissionSettings() }
+            .setNegativeButton(R.string.got_it, null).show()
     }
 
     private fun renderAudioUpdate(update: AudioUpdate) {
         if (!listening || !tunerPageSelected || referencePlaying || referenceSettling || !tunerEngine.accepts(update)) return
         signalLevel.progress = (update.level * 1000).toInt()
+        microphoneCheck?.observe(update.rawRms, update.clipped, update.systemMuted, update.frequency)
+        if (update.systemMuted || update.clipped) {
+            clearReading(getString(if (update.systemMuted) R.string.microphone_system_muted else R.string.microphone_clipping))
+            statusText.setTextColor(errorColor)
+            return
+        }
         val frequency = update.frequency
         if (frequency == null) {
-            if (SystemClock.elapsedRealtime() - lastValidAt < READING_HOLD_MS) return
-            clearReading(getString(if (update.hasSignal) R.string.pitch_stabilizing else R.string.input_too_quiet))
+            inTuneConfirmation.reset()
+            if (lastValidAt > 0 && SystemClock.elapsedRealtime() - lastValidAt < READING_HOLD_MS) {
+                statusText.setText(R.string.reading_held)
+                statusText.setTextColor(textMuted)
+                centsText.setTextColor(textMuted)
+                meter.setReading(lastCents, active = false, isAccurate = false)
+                return
+            }
+            clearReading(getString(when {
+                update.rawRms <= 0.00001 -> R.string.microphone_no_signal
+                update.hasSignal -> R.string.pitch_stabilizing
+                else -> R.string.input_too_quiet
+            }))
             return
         }
 
@@ -527,18 +728,29 @@ class MainActivity : Activity() {
         }
         val cents = TuningMath.centsFromTarget(frequency, target.frequency)
         val accurate = abs(cents) <= 5.0
-        noteText.text = target.note
-        octaveText.text = target.octave.toString()
-        frequencyText.text = getString(R.string.frequency_and_target, frequency, target.frequency)
+        val detected = TuningFeedback.detectedNote(frequency)
+        noteText.text = detected.name
+        octaveText.text = detected.octave.toString()
+        frequencyText.text = String.format(Locale.US, "%.2f Hz", frequency)
+        targetText.text = getString(R.string.target_note_value, target.note, target.octave, target.number, target.frequency)
         centsText.text = String.format(Locale.US, "%+.1f cents", cents)
         centsText.setTextColor(if (accurate) primary else textPrimary)
         statusText.setTextColor(if (accurate) primary else textMuted)
         statusText.setText(when {
+            TuningFeedback.needsStringCheck(cents) -> R.string.check_string_warning
+            TuningFeedback.outsideMeter(cents) -> R.string.outside_meter_warning
             accurate -> R.string.in_tune
             cents < 0 -> R.string.pitch_flat
             else -> R.string.pitch_sharp
         })
         meter.setReading(cents, active = true, isAccurate = accurate)
+        lastCents = cents
+        meter.contentDescription = getString(R.string.meter_accessibility, cents)
+        if (inTuneConfirmation.update(cents, "${activePreset.id}:${target.number}", SystemClock.elapsedRealtime()) &&
+            preferences.getBoolean("in_tune_haptics", true)) {
+            // The platform respects the user\'s global haptic setting; no vibrator permission needed.
+            noteText.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
 
         if (autoMode && selectedStringNumber != target.number) {
             selectedStringNumber = target.number
@@ -547,15 +759,19 @@ class MainActivity : Activity() {
     }
 
     private fun clearReading(message: String) {
+        inTuneConfirmation.reset()
         fun TextView.show(value: String) { if (text.toString() != value) text = value }
         noteText.show("—")
         octaveText.show("")
         frequencyText.show("— Hz")
+        val target = selectedString()
+        targetText.show(getString(R.string.target_note_value, target.note, target.octave, target.number, target.frequency))
         centsText.show("— cents")
         centsText.setTextColor(textPrimary)
         statusText.setTextColor(textMuted)
         statusText.show(message)
         meter.setReading(0.0, active = false, isAccurate = false)
+        meter.contentDescription = getString(R.string.meter_waiting)
     }
 
     private fun playReferenceTone(string: GuitarString) {
@@ -574,8 +790,6 @@ class MainActivity : Activity() {
         updateKeepScreenOn()
         updateStringButtons()
         clearReading(getString(R.string.reference_playing, string.displayName()))
-        noteText.text = string.note
-        octaveText.text = string.octave.toString()
         frequencyText.text = getString(R.string.reference_frequency, string.frequency)
         referenceTonePlayer.play(string) {
             runOnUiThread { finishReferenceTone() }
@@ -590,10 +804,11 @@ class MainActivity : Activity() {
         referenceTonePlayer.stop(notify = false)
         referencePlaying = false
         referenceSettling = false
+        referenceQuietUntil = SystemClock.elapsedRealtime() + REFERENCE_SETTLE_MS + CAPTURE_DRAIN_MS
         playbackFocus.release()
         updateStringButtons()
         // Even interrupted output can leave an acoustic tail or queued capture buffers.
-        if (resumeDetection && listening) tunerEngine.setPaused(false, REFERENCE_SETTLE_MS)
+        if (resumeDetection && listening) tunerEngine.setPaused(false, REFERENCE_SETTLE_MS + CAPTURE_DRAIN_MS)
         else tunerEngine.setPaused(true)
         lastValidAt = 0L
         updateKeepScreenOn()
@@ -604,6 +819,7 @@ class MainActivity : Activity() {
         if (!referencePlaying) return
         referencePlaying = false
         referenceSettling = true
+        referenceQuietUntil = SystemClock.elapsedRealtime() + REFERENCE_SETTLE_MS + CAPTURE_DRAIN_MS
         playbackFocus.release()
         updateStringButtons()
         lastValidAt = 0L
@@ -806,6 +1022,7 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        cancelMicrophoneCheck()
         if (listening) stopListening()
         if (referencePlaying || referenceSettling) stopReferenceTone(resumeDetection = false)
         metronomePanel.stop()
@@ -814,6 +1031,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelMicrophoneCheck()
         tunerEngine.stop()
         referenceTonePlayer.release()
         cancelReferenceRecovery()

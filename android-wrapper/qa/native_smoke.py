@@ -65,6 +65,13 @@ def focus_owned():
     return package in block, data
 
 
+def recording():
+    pid = adb('shell', 'pidof', package).strip()
+    dump = adb('shell', 'dumpsys', 'media.audio_flinger')
+    return any(re.search(r'^\s+yes\s+' + re.escape(pid) + r'\s+', block, re.M)
+               for block in dump.split('Input thread ')[1:])
+
+
 adb("install", "-r", args.apk)
 adb("shell", "am", "force-stop", package)
 adb("shell", "am", "start", "-n", f"{package}/.MainActivity")
@@ -78,16 +85,22 @@ check("Both tool tabs are visible", find(tree, text="调音器") is not None and
 check("Microphone and all six strings are visible without scrolling", find(tree, text="开始调音") is not None and all(find(tree, desc=f"{n} 弦") is not None for n in range(1, 7)))
 check("No manual stop-reference button", all(n.get("text") != "停止参考音" for n in tree.iter("node")))
 
+idle_tree = tree
 tap(find(tree, text="开始调音"))
-tree = snapshot()
-allow = next((n for n in tree.iter("node") if n.get("resource-id") in (
-    "com.android.packageinstaller:id/permission_allow_button",
-    "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
-)), None)
-if allow is not None:
-    tap(allow)
-    tree = snapshot()
-check("Native recording starts after permission", find(tree, text="停止调音") is not None)
+if not recording():
+    dialog = snapshot()
+    if any(n.get("text") == "麦克风使用说明" for n in dialog.iter("node")):
+        tap(find(dialog, text="继续"))
+    if not recording():
+        dialog = snapshot()
+        allow = next((n for n in dialog.iter("node") if n.get("resource-id") in (
+            "com.android.packageinstaller:id/permission_allow_button",
+            "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
+        )), None)
+        if allow is not None:
+            tap(allow)
+check("Native recording starts after permission", recording())
+tree = idle_tree
 string6 = find(tree, desc="6 弦")
 tap(string6)
 owned, audio_dump = focus_owned()
@@ -97,17 +110,21 @@ time.sleep(1.25)
 owned, audio_dump = focus_owned()
 (out / "reference-ended-audio.txt").write_text(audio_dump, encoding="utf-8")
 check("Reference tone stops automatically after one second", not owned)
+check("Recording remains enabled after reference ends", recording())
+# Freeze live pitch updates by explicitly stopping capture before inspecting static labels.
+tap(find(tree, text="开始调音"))
 tree = snapshot("02-reference-ended")
-check("Recording remains enabled after reference ends", find(tree, text="停止调音") is not None)
 check("Reference speaker marker disappears", all("♪" not in n.get("text", "") for n in tree.iter("node")))
+tap(find(tree, text="开始调音"))
 
 # Replacing a tone cancels the previous tone's timer and any delayed resume.
 tap(find(tree, desc="6 弦"))
 time.sleep(0.2)
 tap(find(tree, desc="1 弦"))
 time.sleep(1.6)
+check("Quickly changing strings completes without disabling recording", recording())
+tap(find(tree, text="开始调音"))
 tree = snapshot()
-check("Quickly changing strings completes without disabling recording", find(tree, text="停止调音") is not None)
 tap(find(tree, text="节拍器", klass="android.widget.Button"))
 tree = snapshot("03-metronome")
 initial_bpm = next(int(n.get("text")) for n in tree.iter("node")

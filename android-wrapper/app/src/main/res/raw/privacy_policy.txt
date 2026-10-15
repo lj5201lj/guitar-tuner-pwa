@@ -1,0 +1,30 @@
+Xianzhun privacy policy — native Android app
+Updated / effective: 15 October 2026 · Policy version 1
+
+1. Scope and contact
+This policy describes the native Android app io.github.lj5201lj.xianzhun, version 2.3.0. The public PWA and external websites are separate products. Project maintenance account: GitHub lj5201lj. Questions and privacy requests can be raised at:
+https://github.com/lj5201lj/guitar-tuner-pwa/issues
+GitHub issues are public and may require an account. Do not include recordings, identity information, passwords or private contact details. The operator has not supplied a legal publishing name or support email. These remain release prerequisites for a formal app-store submission; this test release does not assert store compliance.
+
+2. Microphone permission and audio
+Only tuning and the microphone self-test request RECORD_AUDIO. The app explains the purpose before the Android permission request. You can decline; reference tones and the metronome remain available. Recording starts only through your action and stops when you stop it, switch tools, change language, or leave the foreground.
+PCM audio is temporarily processed in memory to estimate pitch, volume and distortion. The self-test keeps only temporary numerical counters. Microphone audio is not saved as a file, retained as history, sent to a server, used to train models, or shared with third parties. Memory buffers are discarded after the recording session. Reference playback temporarily suspends analysis while the microphone connection may remain open; Android may continue showing its microphone indicator until you stop tuning.
+
+3. Local settings
+Tuning choice, one custom tuning, selected string, automatic/manual mode, language, metronome settings, haptic preference and the microphone-use notice status are stored locally. No login, location, contacts, device identifiers, advertising SDK, analytics SDK or app-operated server is used. This version disables Android app backup; platform-managed app language and manufacturer device migration are controlled by the OS, not the app.
+
+4. Internet, feedback and clipboard
+This APK has no INTERNET permission. Core features and in-app policy/licence pages work offline. If you explicitly open an online policy, licence or feedback link, Android opens an external browser. That website and browser may process connection/account information under their own policies; nothing is posted by the app automatically.
+Copy diagnostics is optional. It copies only app version, Android version/API and a blank issue template to your system clipboard; it does not include audio, device IDs or logs. You choose whether to paste or share it. Clipboard access and browser history are governed by the OS/browser.
+
+5. Your choices and deletion
+You can stop tuning at any time, revoke microphone permission in Android app settings, disable in-tune haptics, and continue using non-recording tools. Clear the app storage in Android settings or uninstall to remove app-owned preferences. Public feedback you voluntarily submit is managed separately on GitHub; use its controls or contact the project there to request assistance. Do not submit private information in a public issue.
+
+6. Young users and safety
+No age information or user profiles are collected. A young user should ask a guardian for help with permissions, public feedback and physical string adjustment. Verify the correct string and octave before tightening; automated detection is not a guarantee against overtightening or a broken string.
+
+7. Updates
+Material changes in audio processing, permissions or data practices will be reflected in an updated policy and, where required, a new explanation before use. App updates are obtained manually from the distribution channel; the app does not download updates itself.
+
+Public copy (opens externally only on request):
+https://lj5201lj.github.io/guitar-tuner-pwa/privacy.html

@@ -92,15 +92,62 @@ object YinPitchDetector {
             if (candidate < 0 || bestValue > 0.32) return null
         }
 
+        // Noise can introduce a tiny local dip on the side of the true valley, especially
+        // at long low-frequency periods. Refine locally before interpolating that period.
+        val refinementRadius = max(1, (candidate * 0.025).toInt())
+        candidate = (max(minTau, candidate - refinementRadius)..min(maxTau, candidate + refinementRadius))
+            .minBy { yin[it] }
+
+        // A loud second/third harmonic can create the first acceptable minimum before the
+        // fundamental period. Prefer a longer period only when its valley is substantially
+        // deeper. Equal repeated minima of a genuine high note must NOT cause octave-down.
+        if (yin[candidate] > 0.005) {
+            val firstCandidate = candidate
+            for (multiple in 2..3) {
+                val expected = firstCandidate * multiple
+                if (expected > maxTau) continue
+                val radius = max(3, (expected * 0.03).toInt())
+                val lower = max(minTau, expected - radius)
+                val upper = min(maxTau, expected + radius)
+                val valley = (lower..upper).minBy { yin[it] }
+                if (yin[valley] < yin[candidate] * 0.30) candidate = valley
+            }
+        }
+
         val left = if (candidate > 1) yin[candidate - 1] else yin[candidate]
         val center = yin[candidate]
         val right = if (candidate < maxTau) yin[candidate + 1] else yin[candidate]
         val denominator = 2.0 * (2.0 * center - right - left)
-        val adjustment = if (kotlin.math.abs(denominator) > 1e-10) {
+        val threePointAdjustment = if (kotlin.math.abs(denominator) > 1e-10) {
             ((right - left) / denominator).coerceIn(-1.0, 1.0)
         } else {
             0.0
         }
+        // At low/mid pitches a single noisy CMND point can bias a three-point parabola.
+        // Fit the same local quadratic over a few more symmetric lags, without averaging
+        // the audio itself or suppressing the pluck attack. High pitches keep three points.
+        val radius = min(min(8, max(1, candidate / 40)), min(candidate - 1, maxTau - candidate))
+        val adjustment = if (radius > 1) {
+            var sumY = 0.0
+            var sumX2 = 0.0
+            var sumXY = 0.0
+            var sumX2Y = 0.0
+            var sumX4 = 0.0
+            for (offset in -radius..radius) {
+                val x = offset.toDouble()
+                val y = yin[candidate + offset]
+                sumY += y
+                sumX2 += x * x
+                sumXY += x * y
+                sumX2Y += x * x * y
+                sumX4 += x * x * x * x
+            }
+            val count = radius * 2.0 + 1
+            val quadratic = (sumX2Y - sumX2 * sumY / count) / (sumX4 - sumX2 * sumX2 / count)
+            if (quadratic > 1e-12) {
+                (-(sumXY / sumX2) / (2 * quadratic)).coerceIn(-radius.toDouble(), radius.toDouble())
+            } else threePointAdjustment
+        } else threePointAdjustment
         val frequency = sampleRate / (candidate + adjustment)
         if (!frequency.isFinite() || frequency !in minFrequency..maxFrequency) return null
 

@@ -1,6 +1,16 @@
 Acoustic guitar samples from tonejs-instruments:
 https://github.com/nbrosowsky/tonejs-instruments
 
+Sample library maintained by nbrosowsky. Source details:
+https://github.com/nbrosowsky/tonejs-instruments/blob/master/sample-source-info.txt
+
 Original recording source: University of Iowa Electronic Music Studios.
 Licensed under Creative Commons Attribution 3.0 (CC BY 3.0):
 https://creativecommons.org/licenses/by/3.0/
+
+The bundled MP3 recordings are redistributed unmodified. The app changes pitch
+at playback time for custom notes, sets volume, and fades/stops playback after
+one second. These runtime changes do not imply endorsement by the source.
+
+tonejs-instruments CODE is MIT-licensed; its JavaScript loader is not bundled
+in this native APK. The audio samples have the separate CC BY 3.0 licence above.

@@ -70,6 +70,13 @@ def has_app_focus():
     return package in block.split("External focus policy", 1)[0]
 
 
+def recording():
+    pid = adb('shell', 'pidof', package).strip()
+    dump = adb('shell', 'dumpsys', 'media.audio_flinger')
+    return any(re.search(r'^\s+yes\s+' + re.escape(pid) + r'\s+', block, re.M)
+               for block in dump.split('Input thread ')[1:])
+
+
 adb("install", "-r", args.apk)
 adb("shell", "am", "force-stop", package)
 adb("shell", "am", "start", "-n", f"{package}/.MainActivity")
@@ -85,17 +92,28 @@ dialog = snapshot("03-chinese-custom-tuning")
 check("Chinese custom-tuning editor", find(dialog, text="自定义调弦（B1–E5）") is not None)
 tap(find(dialog, text="取消"))
 tree = snapshot()
-tap(find(tree, resource="tuning_toggle"))
+tap(find(tree, resource="language_button"))
+language_dialog = snapshot()
+english_option = find(language_dialog, text="English")
+tap(find(language_dialog, text="取消"))
 tree = snapshot()
-allow = next((node for node in tree.iter("node") if node.get("resource-id") in (
-    "com.android.packageinstaller:id/permission_allow_button",
-    "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
-)), None)
-if allow is not None:
-    tap(allow)
-    tree = snapshot()
-check("Chinese microphone starts", find(tree, text="停止调音") is not None)
-tree = choose_language(tree, "English")
+tap(find(tree, resource="tuning_toggle"))
+if not recording():
+    dialog = snapshot()
+    if any(n.get("text") == "麦克风使用说明" for n in dialog.iter("node")):
+        tap(find(dialog, text="继续"))
+    if not recording():
+        dialog = snapshot()
+        allow = next((node for node in dialog.iter("node") if node.get("resource-id") in (
+            "com.android.packageinstaller:id/permission_allow_button",
+            "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
+        )), None)
+        if allow is not None:
+            tap(allow)
+check("Chinese microphone starts", recording())
+tap(find(tree, resource="language_button"))
+tap(english_option)
+tree = snapshot()
 check("Changing language stops recording", find(tree, text="Start tuning") is not None)
 tap(find(tree, text="Custom tuning"))
 dialog = snapshot("04-english-custom-tuning")

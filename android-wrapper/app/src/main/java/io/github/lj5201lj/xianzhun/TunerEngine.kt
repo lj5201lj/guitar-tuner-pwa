@@ -11,8 +11,9 @@ import android.os.SystemClock
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 data class AudioUpdate(
     val frequency: Double?,
@@ -21,6 +22,9 @@ data class AudioUpdate(
     val hasSignal: Boolean,
     val level: Double,
     val analysisGeneration: Long,
+    val rawRms: Double = rms,
+    val clipped: Boolean = false,
+    val systemMuted: Boolean = false,
 )
 
 class TunerEngine(
@@ -138,10 +142,11 @@ class TunerEngine(
         val timeStep = 1.0 / sampleRate
         val highAlpha = highRc / (highRc + timeStep)
         val lowAlpha = timeStep / (lowRc + timeStep)
-        val pitchHistory = ArrayDeque<Double>()
-        var smoothedPitch: Double? = null
-        var pendingJumpFrames = 0
-        var noiseFloor = 0.0012
+        val tracker = PitchTracker()
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        var rawEnergy = 0.0
+        var rawCount = 0
+        var clippedCount = 0
         var previousGeneration: Long? = null
 
         fun resetAnalysis() {
@@ -149,13 +154,13 @@ class TunerEngine(
             ringIndex = 0
             ringCount = 0
             sinceAnalysis = 0
-            pitchHistory.clear()
-            smoothedPitch = null
-            pendingJumpFrames = 0
+            tracker.reset()
+            rawEnergy = 0.0
+            rawCount = 0
+            clippedCount = 0
             highPreviousInput = 0.0
             highPreviousOutput = 0.0
             lowPreviousOutput = 0.0
-            noiseFloor = 0.0012
         }
 
         try {
@@ -179,6 +184,9 @@ class TunerEngine(
 
                 for (index in 0 until count) {
                     val input = shorts[index] / 32768.0
+                    rawEnergy += input * input
+                    rawCount++
+                    if (abs(input) >= 0.98) clippedCount++
                     val high = highAlpha * (highPreviousOutput + input - highPreviousInput)
                     highPreviousInput = input
                     highPreviousOutput = high
@@ -196,56 +204,31 @@ class TunerEngine(
                     snapshot[index] = ring[(ringIndex + index) % windowSize]
                 }
 
-                val rms = YinPitchDetector.calculateRms(snapshot)
-                val gate = max(0.0024, noiseFloor * 2.15)
-                val level = ((rms - 0.0015) / 0.055).coerceIn(0.0, 1.0)
-                if (rms < gate) {
-                    noiseFloor = (noiseFloor * 0.94 + rms * 0.06).coerceIn(0.0007, 0.012)
-                    onUpdate(AudioUpdate(null, rms, 0.0, false, level, generation))
-                    continue
-                }
-
-                val estimate = YinPitchDetector.estimate(
-                    snapshot,
-                    sampleRate,
-                    minFrequency = 55.0,
-                    maxFrequency = 700.0,
-                    threshold = 0.18,
-                    minimumRms = gate,
-                )
-                if (estimate == null || estimate.clarity < 0.62) {
-                    if (rms < noiseFloor * 1.7) {
-                        noiseFloor = (noiseFloor * 0.98 + rms * 0.02).coerceIn(0.0007, 0.012)
-                    }
-                    onUpdate(AudioUpdate(null, rms, estimate?.clarity ?: 0.0, true, level, generation))
-                    continue
-                }
-
-                val previous = smoothedPitch
-                if (previous != null) {
-                    val jump = abs(TuningMath.centsFromTarget(estimate.frequency, previous))
-                    if (jump > 150.0) {
-                        pendingJumpFrames += 1
-                        if (pendingJumpFrames < 2) continue
-                        pitchHistory.clear()
-                        smoothedPitch = null
-                    } else {
-                        pendingJumpFrames = 0
-                    }
-                }
-
-                pitchHistory.addLast(estimate.frequency)
-                while (pitchHistory.size > 5) pitchHistory.removeFirst()
-                val stable = pitchHistory.sorted()[pitchHistory.size / 2]
-                smoothedPitch = smoothedPitch?.let { it * 0.68 + stable * 0.32 } ?: stable
+                val rawRms = sqrt(rawEnergy / rawCount.coerceAtLeast(1))
+                val clipped = clippedCount.toDouble() / rawCount.coerceAtLeast(1) >= 0.005
+                rawEnergy = 0.0
+                rawCount = 0
+                clippedCount = 0
+                val systemMuted = audioManager.isMicrophoneMute ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        runCatching { record.activeRecordingConfiguration?.isClientSilenced == true }.getOrDefault(false))
+                val pitch = if (systemMuted || clipped) {
+                    tracker.reset()
+                    TrackedPitch(null, 0.0, 0.0, rawRms >= PitchTracker.MINIMUM_RMS)
+                } else tracker.analyze(snapshot, sampleRate, SystemClock.elapsedRealtime())
+                // A logarithmic meter remains useful even for quiet but detectable strings.
+                val level = ((20 * kotlin.math.log10(rawRms.coerceAtLeast(0.00001)) + 80) / 65).coerceIn(0.0, 1.0)
                 onUpdate(
                     AudioUpdate(
-                        frequency = smoothedPitch,
-                        rms = rms,
-                        clarity = estimate.clarity,
-                        hasSignal = true,
+                        frequency = pitch.frequency,
+                        rms = pitch.rms,
+                        clarity = pitch.clarity,
+                        hasSignal = pitch.hasSignal,
                         level = level,
                         analysisGeneration = generation,
+                        rawRms = rawRms,
+                        clipped = clipped,
+                        systemMuted = systemMuted,
                     ),
                 )
             }

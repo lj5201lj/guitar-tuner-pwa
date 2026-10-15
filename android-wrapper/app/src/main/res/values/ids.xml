@@ -4,4 +4,16 @@
     <item name="tab_tuner" type="id" />
     <item name="tab_metronome" type="id" />
     <item name="tuning_toggle" type="id" />
+    <item name="microphone_check" type="id" />
+    <item name="microphone_check_status" type="id" />
+    <item name="about_button" type="id" />
+    <item name="more_button" type="id" />
+    <item name="privacy_button" type="id" />
+    <item name="licenses_button" type="id" />
+    <item name="feedback_button" type="id" />
+    <item name="help_button" type="id" />
+    <item name="haptics_toggle" type="id" />
+    <item name="detected_note" type="id" />
+    <item name="target_note" type="id" />
+    <item name="tuning_status" type="id" />
 </resources>
